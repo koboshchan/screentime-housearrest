@@ -22,9 +22,15 @@ struct ContentView: View {
                         }.onDelete { for i in $0 { store.delete(store.sessions[i].id) } }
                     }
                 }
+                if let b = store.blocked { Section { Text(b).foregroundColor(.orange) } }
                 if let e = store.error { Section { Text(e).foregroundColor(.red) } }
+                if let m = store.status { Section { Text(m) } }
+                if !store.warnings.isEmpty {
+                    Section(header: Text("Notes")) { ForEach(store.warnings, id: \.self) { Text($0).font(.footnote).foregroundColor(.secondary) } }
+                }
                 Section {
-                    Button("Apply") { store.apply() }.disabled(!store.capability.canApply || store.sessions.isEmpty)
+                    Button("Reload from device") { store.reload() }.disabled(store.busy || !store.capability.canApply)
+                    Button("Apply") { store.apply() }.disabled(!store.canApply)
                 }
             }
             .navigationTitle("Usage")
@@ -32,6 +38,13 @@ struct ContentView: View {
             .sheet(isPresented: $showingAdd) { SessionEditor(store: store, session: nil) }
         }
         .navigationViewStyle(StackNavigationViewStyle())
+        .alert("Screen Time changed", isPresented: $store.showStale) {
+            Button("Cancel", role: .cancel) {}
+            Button("Reload") { store.reload() }
+            Button("Override", role: .destructive) { store.apply(override: true) }
+        } message: {
+            Text("Usage on this device changed after you loaded it. Cancel keeps your edits unsaved. Reload discards them and reads the current usage. Override writes your edits over the newer changes, after a fresh verified backup of the current data.")
+        }
         .onAppear { store.refreshCapability() }
     }
 }
