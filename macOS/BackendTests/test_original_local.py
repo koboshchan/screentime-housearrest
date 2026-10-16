@@ -71,6 +71,14 @@ class OriginalTests(unittest.TestCase):
         request=self.request();request['sessions'][0]['bundle']='x'*300
         self.engine.apply(request)
         self.assertEqual(self.engine.read()['sessions'][0]['bundle'],'x'*300)
+    def test_next_day_start_boundary_preserved(self):
+        (self.engine.stream/'b').write_bytes(test_backend.segment([
+            (True,100,'com.test.App'),(False,200,'com.test.App'),
+            (True,86400,'com.next.App'),(False,86500,'com.next.App')]))
+        request=self.request()
+        self.engine.apply(request)
+        self.assertIn(('com.next.App',86400,86500),
+                      [(s['bundle'],s['start'],s['end']) for s in self.engine.read()['sessions']])
     def test_module_import_no_side_effect(self):
         source=Path(b.original_local.__file__).read_text()
         self.assertNotIn('killall',source);self.assertNotIn('launchctl',source)

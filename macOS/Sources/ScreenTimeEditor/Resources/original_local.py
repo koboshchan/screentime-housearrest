@@ -67,7 +67,7 @@ def prepare(engine, start, end, sessions, api):
     for session in existing:
         if session['end'] > start and session['start'] < end:
             outside.extend(api.preserve_outside([session], start, end))
-    kept = [record for record in records if record[1] < start or record[1] > end]
+    kept = [record for record in records if record[1] < start or record[1] >= end]
     # Remove both endpoints of crossing sessions before rebuilding outside pieces.
     remove = set()
     for session in existing:
