@@ -30,6 +30,9 @@ _MODULE_PATH = Path(__file__).with_name("original_local.py")
 _spec = importlib.util.spec_from_file_location("screentime_original_local", _MODULE_PATH)
 original_local = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(original_local)
+_reset_spec = importlib.util.spec_from_file_location("screentime_local_reset", Path(__file__).with_name("local_reset.py"))
+local_reset = importlib.util.module_from_spec(_reset_spec)
+_reset_spec.loader.exec_module(local_reset)
 
 class StorageError(Exception):
     def __init__(self, message, code="storage_error"):
@@ -255,8 +258,12 @@ def copy_private(source, destination, limit=None):
 
 class Engine:
     # home injection is a Python testing API only. CLI always supplies Path.home().
-    def __init__(self, home):
+    def __init__(self, home, status_provider=None, reset_paths=None, reset_runner=None, reset_access=None):
         self.home = Path(home)
+        self.status_provider = status_provider or status
+        self.reset_paths = reset_paths
+        self.reset_runner = reset_runner or subprocess.run
+        self.reset_access = reset_access or os.access
         self.stream = self.home / "Library/Biome/streams/restricted/ScreenTime.AppUsage/local"
         self.database = self.home / "Library/Application Support/Knowledge/knowledgeC.db"
 
@@ -372,6 +379,9 @@ class Engine:
             from types import SimpleNamespace
             api = SimpleNamespace(**globals())
         plan = original_local.prepare(self, start, end, sessions, api)
+        # Only an explicit disabled result activates reset; unknown uses logout.
+        reset = self.status_provider().get("sip") == "disabled"
+        reset_plan = local_reset.prepare(self, start, end, sessions, api, self.reset_paths) if reset else None
         root = self.home / "Library/Application Support/ScreenTimeEditor/Backups"
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
         no_symlink_parents(root)
@@ -381,10 +391,33 @@ class Engine:
         require(self.fingerprint() == current_revision,
                 "Current source changed while preparing its backup; no changes applied.",
                 "backup_failed" if override else "stale_revision")
+        reset_destination = root / (destination.name + "-reset")
+        if reset:
+            try:
+                local_reset.snapshot(reset_plan, reset_destination, api)
+                local_reset.verify(reset_destination, reset_plan, api)
+                # Reverify BOTH independent snapshots before any privilege/process/write.
+                verify_backup(destination, current_revision)
+                local_reset.preflight(reset_plan, api, self.reset_access)
+                require(self.fingerprint() == current_revision,
+                        "Usage sources changed before reset.", "concurrent_change")
+            except Exception as exc:
+                raise StorageError("SIP-off reset blocked; no stores changed. Verified usage backup: " +
+                    str(destination) + ". Reset backup (may be incomplete): " + str(reset_destination) +
+                    ". Details: " + str(exc), getattr(exc, "code", "reset_failed")) from exc
         try:
+            if reset:
+                local_reset.stop_processes(api, self.reset_runner)
             result = original_local.inject_local(self, plan, api)
+            if reset:
+                result = local_reset.perform(self, reset_plan, api, self.reset_runner)
         except Exception as exc:
-            raise StorageError("Apply failed; stores may be partially changed. Verified backup: " + str(destination) + ". Details: " + str(exc), "partial_apply_failed") from exc
+            raise StorageError("Apply failed; stores may be partially changed. Verified backup: " + str(destination) + ". Reset backup: " + (str(reset_destination) if reset else "not used") + ". Details: " + str(exc), "partial_apply_failed") from exc
+        if reset:
+            return dict(status=result, logoutRequired=False, backupPath=str(destination),
+                        resetBackupPath=str(reset_destination), warnings=[
+                        "Local backlight/cache reset completed; native UI refresh and cross-device aggregation are not independently verified.",
+                        "Multi-store writes are not atomic; both verified backups are retained."])
         return dict(status=result, logoutRequired=True, backupPath=str(destination),
                     warnings=["Log out and back in to refresh Screen Time. No processes were terminated.",
                               "Original latest-segment/Z_ENT=1 behavior retained; multi-store writes are not atomic and cross-device aggregation is not verified."])
@@ -561,7 +594,7 @@ def status(runner=subprocess.run):
     elif details and "System Integrity Protection status: disabled." in details:
         sip = "disabled"
     return dict(macOS=version or "unknown", build=build or "unknown", sip=sip, sipDetails=details or se,
-                warnings=[error for error in (ve, be) if error], canApply=True, applyBlockReason=None, supportedWriters=["original_local"])
+                warnings=[error for error in (ve, be) if error], canApply=True, applyBlockReason=None, supportedWriters=(["original_local", "sip_off_local_reset"] if sip == "disabled" else ["original_local"]))
 
 def main():
     try:
