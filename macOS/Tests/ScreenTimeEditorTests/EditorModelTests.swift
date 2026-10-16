@@ -115,6 +115,32 @@ final class EditorModelTests: XCTestCase {
     XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("apply.log").path))
     XCTAssertTrue(m.applyMessage?.contains("/tmp/fixture-backup") == true); XCTAssertTrue(m.applyMessage?.contains("Log out") == true); XCTAssertFalse(m.applyMessage?.contains("SUCCESS_LOGOUT") == true)
   }
+  func testSuccessfulSIPOffResetDoesNotAskForLogout() async throws {
+    let url = try script()
+    var source = try String(contentsOf: url, encoding: .utf8)
+    source = source.replacingOccurrences(of: "\"logoutRequired\":True", with: "\"logoutRequired\":False")
+    try source.write(to: url, atomically: true, encoding: .utf8)
+    let m = EditorModel(scriptURL: url)
+    await m.bootstrap()
+    var s = m.sessions[0]; s.end += 600; m.commitEdit(s)
+    await m.apply()
+    XCTAssertTrue(m.applyMessage?.contains("fixture-backup") == true)
+    XCTAssertFalse(m.applyMessage?.contains("Log out") == true)
+    XCTAssertFalse(m.applyMessage?.contains("restart") == true)
+  }
+
+  func testMissingResetResultDefaultsToLogoutGuidance() async throws {
+    let url = try script()
+    var source = try String(contentsOf: url, encoding: .utf8)
+    source = source.replacingOccurrences(of: ",\"logoutRequired\":True", with: "")
+    try source.write(to: url, atomically: true, encoding: .utf8)
+    let m = EditorModel(scriptURL: url)
+    await m.bootstrap()
+    var s = m.sessions[0]; s.end += 600; m.commitEdit(s)
+    await m.apply()
+    XCTAssertTrue(m.applyMessage?.contains("Log out") == true)
+  }
+
   func staleModel() async throws -> EditorModel {
     let m = try await model()
     var s = m.sessions[0]; s.end += 600; m.commitEdit(s)

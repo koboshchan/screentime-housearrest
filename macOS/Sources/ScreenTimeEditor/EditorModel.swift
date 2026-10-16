@@ -174,7 +174,7 @@ final class EditorModel {
         stale = true; return
       }
       let raw = (r.status ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-      let needsLogout = r.logoutRequired ?? true || raw.uppercased().contains("LOGOUT_REQUIRED")
+      let needsLogout = r.logoutRequired ?? true
       let st = raw.uppercased().hasPrefix("SUCCESS") ? "applied" : (raw.isEmpty ? "none reported" : raw)
       applyMessage = "Backup saved at \(backup). Status: \(st)." + (needsLogout ? " Log out and back in, or restart, for Screen Time to show the change." : "")
       await load()
