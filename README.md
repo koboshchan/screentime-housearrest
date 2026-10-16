@@ -8,7 +8,7 @@ A native, local Screen Time editor, separated from the original research tools.
 
 `iOS/` contains the native iPhone application and RootHide helper/package sources. Package and privilege support must be verified against the actual jailbreak before installation. A RootHide bootstrap and a full jailbreak are not interchangeable.
 
-`poc/` documents the research archive. The historical implementation, databases, captures, binaries and credentials remain in `poc/private/`, excluded from Git and restricted to the current user. Nothing in the shipped apps imports or executes that archive.
+The original research is preserved outside this project in private, verified backups. The project contains only the macOS and iOS platform directories. Neither app imports or executes the historical research.
 
 ## Safety
 

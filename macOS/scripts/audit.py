@@ -6,7 +6,7 @@ import re
 import subprocess
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 PRIVATE = "poc/private/"
 PATTERNS = {
     "private key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
@@ -19,9 +19,10 @@ def main():
     problems = []
     tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0")
     problems += [{"path": p, "reason": "private content tracked"} for p in tracked if p.startswith(PRIVATE)]
-    subprocess.run(["git", "check-ignore", "-q", PRIVATE + "scripts/inject_remote_mac.py"], cwd=ROOT, check=True)
+    if (ROOT / "poc").exists():
+        problems.append({"path": "poc", "reason": "removed research folder must not return"})
     count = 0
-    for folder in ("macOS", "iOS", "poc"):
+    for folder in ("macOS", "iOS"):
         for p in (ROOT / folder).rglob("*"):
             rel = p.relative_to(ROOT).as_posix()
             if rel.startswith(PRIVATE) or any(part in EXCLUDED for part in p.parts):
