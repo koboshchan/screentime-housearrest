@@ -1,5 +1,5 @@
 SHELL := /bin/sh
-.PHONY: all macos test ios ios-package audit
+.PHONY: all macos test ios ios-package audit verify-deployment
 all: macos
 macos:
 	cd macOS && ./build.sh
@@ -10,5 +10,7 @@ ios:
 	bash iOS/build.sh
 ios-package:
 	python3 iOS/package.py --production
+verify-deployment:
+	python3 macOS/scripts/verify_deployment.py macos ios
 audit:
 	python3 macOS/scripts/audit.py

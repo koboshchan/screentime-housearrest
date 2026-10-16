@@ -5,7 +5,7 @@ import sys
 def main():
     print("REFUSED: no verified RootHide packaging/signing scheme or privilege integration. "
           "Run build.sh for local unsigned compile-validation artifacts only. "
-          "No Debian package will be created.", file=sys.stderr)
+          "Required deployment minimum is iOS 18.0 for both app and helper. No Debian package will be created.", file=sys.stderr)
     return 2
 
 if __name__ == "__main__":

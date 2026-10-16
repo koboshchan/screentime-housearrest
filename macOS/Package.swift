@@ -2,7 +2,7 @@
 import PackageDescription
 let package = Package(
   name: "ScreenTimeEditor",
-  platforms: [.macOS(.v14)],
+  platforms: [.macOS("26.0")],
   targets: [
     .target(name: "STCore", path: "Sources/STCore"),
     .executableTarget(name: "ScreenTimeEditor", dependencies: ["STCore"], path: "Sources/ScreenTimeEditor",

@@ -20,7 +20,7 @@ https://github.com/roothide/libroothide/blob/main/jbroot.m
 
 ## Validation and artifacts
 
-Run bash iOS/build.sh on the existing Xcode Mac for local compile validation. It builds unsigned arm64 iOS 15-target app/helper Mach-O files under build/UNSIGNED-COMPILE-ONLY.app, runs pure host logic tests, and runs host-only protocol tests against the new no-I/O stub. This does not establish runtime behavior on iOS. No app or helper is installed or run on a device. No existing legacy code is executed.
+Run bash iOS/build.sh on the existing Xcode Mac for local compile validation. It builds unsigned arm64 iOS 18-target app/helper Mach-O files under build/UNSIGNED-COMPILE-ONLY.app, runs pure host logic tests, and runs host-only protocol tests against the new no-I/O stub. This does not establish runtime behavior on iOS. No app or helper is installed or run on a device. No existing legacy code is executed.
 
 package.py always refuses packaging with exit 2, including --production; it emits no archive. The previous UNSIGNED-TEST.deb used an unverified architecture and was not a valid deliverable. It was removed with the task-owned generated build directory during rebuild. There is no current .deb deliverable and no artifact should be sent or installed.
 
@@ -49,3 +49,8 @@ The host build now compiles the actual App/HelperClient.swift with HOST_IPC_TEST
 HelperClient now closes the duplicated child pipe writer and rejects signal/unknown exits or mismatched ok/exit-status replies. This validates the stub command contract, NOT root escalation, authenticated production IPC, a live reader or writer. The synchronous transport still lacks a production timeout/cancellation contract and must not be enabled for privileged live work in this state.
 
 No existing .deb is available to parse: the invalid guessed artifact was retired. Parsing a fabricated ar/tar would not establish RootHide compatibility. Packaging remains refused until the official scheme/tooling and privileged layout are verified. No architecture-guessed archive has been recreated, executed, extracted or installed.
+
+
+## Deployment target update
+
+The current app and helper both target iOS 18.0 minimum. App Info.plist also requires 18.0. Host-only test/snapshot tools target macOS 26.0, matching the Mac application. Earlier 15.0 binary metadata above records historical validation and is superseded by this update. Both current iOS Mach-O LC_BUILD_VERSION entries and plist metadata are checked by build.sh; make verify-deployment rechecks the artifacts. There is no active Theos Makefile or Debian control file because production packaging still refuses. No fabricated package metadata or installation is introduced.

@@ -16,11 +16,12 @@ cat > "$APP/Contents/Info.plist" <<EOF
 <key>CFBundleExecutable</key><string>ScreenTimeEditor</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>1.0</string>
-<key>LSMinimumSystemVersion</key><string>14.0</string>
+<key>LSMinimumSystemVersion</key><string>26.0</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 EOF
 # Ad-hoc signing by default; set SIGN_IDENTITY to a Developer ID name to sign for distribution.
 codesign --force --options runtime --sign "${SIGN_IDENTITY:--}" "$APP"
 codesign --verify --strict "$APP"
+python3 scripts/verify_deployment.py macos
 echo built "$APP"

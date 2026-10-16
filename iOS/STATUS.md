@@ -20,7 +20,7 @@ https://github.com/roothide/libroothide/blob/main/jbroot.m
 
 ## Validation and artifacts
 
-Run bash iOS/build.sh on the existing Xcode Mac for local compile validation. It builds unsigned arm64 iOS 15-target app/helper Mach-O files under build/UNSIGNED-COMPILE-ONLY.app, runs pure host logic tests, and runs host-only protocol tests against the new no-I/O stub. This does not establish runtime behavior on iOS. No app or helper is installed or run on a device. No existing legacy code is executed.
+Run bash iOS/build.sh on the existing Xcode Mac for local compile validation. It builds unsigned arm64 iOS 18-target app/helper Mach-O files under build/UNSIGNED-COMPILE-ONLY.app, runs pure host logic tests, and runs host-only protocol tests against the new no-I/O stub. This does not establish runtime behavior on iOS. No app or helper is installed or run on a device. No existing legacy code is executed.
 
 package.py always refuses packaging with exit 2, including --production; it emits no archive. The previous UNSIGNED-TEST.deb used an unverified architecture and was not a valid deliverable. It was removed with the task-owned generated build directory during rebuild. There is no current .deb deliverable and no artifact should be sent or installed.
 
@@ -56,3 +56,8 @@ No existing .deb is available to parse: the invalid guessed artifact was retired
 The final read-only tool probe found THEOS set but its target directory and makefiles/common.mk absent, ~/theos absent, ldid absent and dpkg-deb absent on this Mac. No tool installation was authorized or performed. The official RootHide docs require its Theos scheme (or an actual integrated Xcode devkit), randomized-root path conversion and generated .jbroot linkage. This project currently has neither verified scheme integration nor an authenticated root launch layout. Missing signing/packaging tools are an environment blocker; missing live transport/schema/writer integration is a separate implementation blocker. Installing tools alone will not make this a working editor.
 
 The final rerun compiled the unsigned iOS app/helper with no warnings, passed 14 model checks, 8 real Swift host IPC cases plus missing executable, and 8 Python stub protocol cases. package.py --production refused with exit 2 and no .deb. Offscreen shared-component light/dark renders were regenerated after the plain-language and contrast correction, then visually inspected with no clipping or legibility issue. These are not device screenshots or a runtime integration test. Actual app/helper platform metadata was IOS, minimum 15.0, SDK 27.2. No device or simulator install, protected-store read, backup or usage write was performed.
+
+
+## Deployment target update
+
+The current app and helper both target iOS 18.0 minimum. App Info.plist also requires 18.0. Host-only test/snapshot tools target macOS 26.0, matching the Mac application. Earlier 15.0 binary metadata above records historical validation and is superseded by this update. Both current iOS Mach-O LC_BUILD_VERSION entries and plist metadata are checked by build.sh; make verify-deployment rechecks the artifacts. There is no active Theos Makefile or Debian control file because production packaging still refuses. No fabricated package metadata or installation is introduced.

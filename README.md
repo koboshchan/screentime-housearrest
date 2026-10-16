@@ -18,6 +18,10 @@ Production apply currently refuses every write. Any future enabled apply must cr
 
 Private Apple storage formats are not stable APIs. Support is limited to the layouts explicitly validated by the storage engine. Permission errors are reported, not worked around by disabling SIP.
 
+## Deployment minimums
+
+iOS app and helper require iOS 18.0 or later. The Mac app and host validation tools require macOS 26.0 or later. Build scripts verify the actual Mach-O LC_BUILD_VERSION minimums and app plist metadata; make verify-deployment rechecks both platform builds. Production iOS packaging remains refused, so there is no Debian control file or installable package to validate.
+
 ## Development
 
 Use `make macos` for the Mac app and `make test` for backend fixtures and Swift tests. Use `make ios` for unsigned iOS compile-validation only. `make ios-package` deliberately refuses until packaging and privilege integration are verified. See `iOS/README.md`.

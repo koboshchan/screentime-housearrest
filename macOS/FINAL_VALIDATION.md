@@ -13,3 +13,11 @@ Both platforms refuse live apply. No certified multi-store writer/rollback exist
 iOS final compile/model/IPC/package refusal and official RootHide environment blockers are recorded in ../iOS/STATUS.md. Missing RootHide toolchain/signing plus missing authenticated privileged integration prevent an installable package; no .deb is delivered.
 
 Both private backups and the external private research archive remain outside this repository. The fresh pre-edit backup was independently rehashed across all 3262 manifest entries with zero file/link mismatches, regular files owner-only and backup root 0700. The earlier backup remains present. poc/ is absent.
+
+## Deployment minimums, verified after target update
+
+The Mac Swift package, release-app Info.plist and host snapshot/test tool targets now require macOS 26.0. The unsigned iOS app/helper compiler targets and app Info.plist require iOS 18.0. vtool -show-build confirms LC_BUILD_VERSION platform MACOS/minos 26.0 on the Mac app and platform IOS/minos 18.0 on both iOS executables. App plist checks agree. Each build automatically runs the metadata verifier; make verify-deployment checks both platforms.
+
+The active project has no Xcode project, Theos Makefile or Debian control file to update. Production packaging continues to refuse, and its error now explicitly identifies the iOS 18.0 requirement. Availability inspection found no obsolete #available/@available branches in the source. HOST_IPC_TEST is retained only as a host fixture-isolation flag, not an OS-availability workaround. Both app builds and both host screenshot harnesses compile without warnings or unavailable-API errors.
+
+The rerun passes 53 Python tests (including six fail-closed deployment-verifier regressions), 16 Swift tests, and the existing iOS model and host IPC/protocol checks. Both screenshot harnesses complete under the new host target. No actual usage write, install, TCC change or package creation occurred.
