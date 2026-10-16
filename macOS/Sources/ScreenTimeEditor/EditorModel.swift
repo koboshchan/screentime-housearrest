@@ -176,7 +176,8 @@ final class EditorModel {
       let raw = (r.status ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
       let needsLogout = r.logoutRequired ?? true
       let st = raw.uppercased().hasPrefix("SUCCESS") ? "applied" : (raw.isEmpty ? "none reported" : raw)
-      applyMessage = "Backup saved at \(backup). Status: \(st)." + (needsLogout ? " Log out and back in, or restart, for Screen Time to show the change." : "")
+      let resetBackup = r.resetBackupPath.map { " Reset backup saved at \($0)." } ?? ""
+      applyMessage = "Backup saved at \(backup)." + resetBackup + " Status: \(st)." + (needsLogout ? " Log out and back in, or restart, for Screen Time to show the change." : " Local reset completed.")
       await load()
     } catch {
       if (error as? BackendError)?.code == "stale_revision" {

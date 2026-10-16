@@ -119,6 +119,7 @@ final class EditorModelTests: XCTestCase {
     let url = try script()
     var source = try String(contentsOf: url, encoding: .utf8)
     source = source.replacingOccurrences(of: "\"logoutRequired\":True", with: "\"logoutRequired\":False")
+    source = source.replacingOccurrences(of: "\"status\":\"SUCCESS_LOGOUT_REQUIRED\"", with: "\"status\":\"SUCCESS_RESET_COMPLETED\",\"resetBackupPath\":\"/tmp/fixture-reset-backup\"")
     try source.write(to: url, atomically: true, encoding: .utf8)
     let m = EditorModel(scriptURL: url)
     await m.bootstrap()
@@ -127,6 +128,8 @@ final class EditorModelTests: XCTestCase {
     XCTAssertTrue(m.applyMessage?.contains("fixture-backup") == true)
     XCTAssertFalse(m.applyMessage?.contains("Log out") == true)
     XCTAssertFalse(m.applyMessage?.contains("restart") == true)
+    XCTAssertTrue(m.applyMessage?.contains("fixture-reset-backup") == true)
+    XCTAssertTrue(m.applyMessage?.contains("Local reset completed") == true)
   }
 
   func testMissingResetResultDefaultsToLogoutGuidance() async throws {
