@@ -1,0 +1,21 @@
+import Foundation
+var fails = 0
+func check(_ c: Bool, _ m: String) { if !c { print("FAIL", m); fails += 1 } }
+let a = UsageSession(bundleID: "com.apple.mobilesafari", start: 0, end: 3600)
+let b = UsageSession(bundleID: "com.apple.Preferences", start: 1800, end: 7200)
+check(SessionRules.rawTotal([a, b]) == 9000, "raw")
+check(SessionRules.screenOnTotal([a, b]) == 7200, "union")
+check((try? SessionRules.validate(a)) != nil, "valid")
+check((try? SessionRules.validate(UsageSession(bundleID: "x", start: 0, end: 600))) == nil, "bad id")
+check((try? SessionRules.validate(UsageSession(bundleID: "com.a.b", start: 0, end: 30))) == nil, "short")
+check((try? SessionRules.validate(UsageSession(bundleID: "com.a.b", start: 80000, end: 90000))) == nil, "past day")
+check((try? SessionRules.validate(UsageSession(bundleID: "com.a/../b", start: 0, end: 600))) == nil, "slash")
+check((try? SessionRules.validate(UsageSession(bundleID: "com.a.b", start: .nan, end: 600))) == nil, "nan")
+check(SessionRules.snap(89) == 60, "snap")
+check(Capability.from(nil).canApply == false, "nil closed")
+check(Capability.from(HelperReply(ok: true, code: "ok", message: "", details: [:])).canApply == false, "missing details closed")
+check(Capability.from(HelperReply(ok: true, code: "ok", message: "", details: ["root": "1", "schema": "unsupported"])).canApply == false, "schema closed")
+check(Capability.from(HelperReply(ok: false, code: "not_root", message: "x", details: ["root": "1", "schema": "supported"])).canApply == false, "notok closed")
+check(Capability.from(HelperReply(ok: true, code: "ok", message: "", details: ["root": "1", "schema": "supported"])).canApply == false, "unvalidated ready reply closed")
+print(fails == 0 ? "ALL PASS" : "FAILURES \(fails)")
+exit(fails == 0 ? 0 : 1)
