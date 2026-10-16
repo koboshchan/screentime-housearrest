@@ -147,7 +147,7 @@ struct DetailPane: View {
           else if model.sessions.isEmpty { ContentUnavailableView("No sessions", systemImage: "clock", description: Text("Nothing recorded for this day. Use Add to create a session.")) }
           else { TimelineEditor().padding(24) }
         }
-        if let w = model.warnings.first { Text(w).font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 24).padding(.bottom, 8) }
+        if let w = model.warnings.first { Text(w).font(.footnote).foregroundStyle(.primary).padding(.horizontal, 24).padding(.bottom, 8) }
         Divider()
         Footer()
       }

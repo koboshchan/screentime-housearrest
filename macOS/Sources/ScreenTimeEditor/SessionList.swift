@@ -10,10 +10,10 @@ struct SessionList: View {
   var body: some View {
     @Bindable var m = model
     List(selection: $m.selection) {
-      ForEach(model.sessions) { s in
+      ForEach(model.visibleSessions) { s in
         VStack(alignment: .leading, spacing: 2) {
           AppIdentityLabel(bundleID: s.bundle)
-          Text("\(clock(s.start)) – \(clock(s.end))  ·  \(DayMath.format(s.duration))")
+          Text("\(clock(s.start)) – \(clock(s.end))  ·  \((s.duration < 60 ? "<1m" : DayMath.format(s.duration)))")
             .font(.caption).foregroundStyle(.secondary).monospacedDigit()
         }
         .tag(s.id)
@@ -21,6 +21,16 @@ struct SessionList: View {
         .accessibilityLabel("\(AppIdentityResolver.shared.resolve(s.bundle).name), \(clock(s.start)) to \(clock(s.end))")
         .contextMenu { Button("Delete", role: .destructive) { model.delete(s.id) } }
       }
+    }
+    .safeAreaInset(edge: .top) {
+      VStack(alignment: .leading, spacing: 4) {
+        Toggle("Show sub-minute sessions", isOn: $m.showShortSessions)
+          .toggleStyle(.checkbox)
+        if model.shortSessionCount > 0 {
+          Text("\(model.shortSessionCount) short sessions \(model.showShortSessions ? "shown" : "hidden")")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+      }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(.bar)
     }
     .onDeleteCommand { if let id = model.selection { model.delete(id) } }
     .safeAreaInset(edge: .bottom) {

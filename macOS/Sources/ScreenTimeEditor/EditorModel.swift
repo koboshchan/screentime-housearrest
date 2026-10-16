@@ -52,7 +52,12 @@ final class EditorModel {
     dirty && !applying && !loading && loadError == nil && !stale && !revision.isEmpty && status?.canApply == true && readCanApply && backend != nil
   }
   var overlapping: Set<String> { DayMath.overlaps(sessions) }
-  var bundles: [String] { Array(Set(sessions.map(\.bundle))).sorted() }
+  // Display filtering only. Hidden records remain in edits, undo and Apply.
+  var showShortSessions = false
+  var timelineZoom = 1.0
+  var shortSessionCount: Int { sessions.filter { $0.duration < 60 }.count }
+  var visibleSessions: [Session] { showShortSessions ? sessions : sessions.filter { $0.duration >= 60 } }
+  var bundles: [String] { Array(Set(visibleSessions.map(\.bundle))).sorted() }
 
   private func key(_ s: Session) -> String { "\(s.bundle)|\(s.start)|\(s.end)" }
 

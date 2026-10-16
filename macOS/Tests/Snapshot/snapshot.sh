@@ -9,4 +9,4 @@ xcrun swiftc -sdk "$SDK" -target arm64-apple-macos26.0 -swift-version 6 -parse-a
 xcrun swiftc -sdk "$SDK" -target arm64-apple-macos26.0 -swift-version 6 -parse-as-library -I $O -L $O -lSTCore \
   -Xlinker -rpath -Xlinker "@executable_path" \
   Sources/ScreenTimeEditor/{AppIdentity,ContentView,EditorModel,SessionList,TimelineEditor}.swift Tests/Snapshot/main.swift -o $O/snapshot
-$O/snapshot Sources/ScreenTimeEditor/Resources/backend.py build/snapshots
+$O/snapshot Sources/ScreenTimeEditor/Resources/backend.py build/snapshots "$@"

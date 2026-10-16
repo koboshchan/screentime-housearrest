@@ -214,4 +214,41 @@ final class EditorModelTests: XCTestCase {
     XCTAssertThrowsError(try ReadCheck.write(m, to: link))
     XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "keep")
   }
+  func testShortFilterIsPresentationOnlyAndToggleRestoresAll() async throws {
+    let m = try await model()
+    let tiny = Session(id: "tiny", bundle: "com.short", start: m.dayStart + 20, end: m.dayStart + 20.2)
+    let minute = Session(id: "minute", bundle: "com.minute", start: m.dayStart + 30, end: m.dayStart + 90)
+    m.sessions += [tiny, minute]
+    let all = m.sessions
+    XCTAssertEqual(m.shortSessionCount, 1)
+    XCTAssertFalse(m.visibleSessions.contains(tiny))
+    XCTAssertTrue(m.visibleSessions.contains(minute))
+    XCTAssertFalse(m.bundles.contains("com.short"))
+    m.showShortSessions = true
+    XCTAssertEqual(m.visibleSessions, all)
+    XCTAssertTrue(m.bundles.contains("com.short"))
+    m.showShortSessions = false
+    XCTAssertEqual(m.sessions, all)
+  }
+
+  func testFilteredRecordsStillGoToApply() async throws {
+    let m = try await model()
+    let tiny = Session(id: "tiny", bundle: "com.short", start: m.dayStart + 20, end: m.dayStart + 20.2)
+    m.sessions.append(tiny)
+    XCTAssertFalse(m.visibleSessions.contains(tiny))
+    await m.apply()
+    let data = try Data(contentsOf: dir.appendingPathComponent("request.json"))
+    let req = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String:Any])
+    let sessions = try XCTUnwrap(req["sessions"] as? [[String:Any]])
+    XCTAssertTrue(sessions.contains { $0["id"] as? String == "tiny" })
+  }
+
+  func testFilterDoesNotMakeCleanDataDirty() async throws {
+    let m = try await model()
+    m.showShortSessions = true
+    m.timelineZoom = 4
+    XCTAssertFalse(m.dirty)
+    XCTAssertFalse(m.canApply)
+  }
+
 }
