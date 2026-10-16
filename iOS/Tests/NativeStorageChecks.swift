@@ -29,14 +29,35 @@ import Darwin
         let path = stream.appendingPathComponent("0000000002")
         try privateWrite(segment.encoded(),path)
         let store = NativeStorage(database:dbURL,stream:stream,backups:backup)
+        // Reader trusts state-1 footer clocks, not protobuf clocks. Invalid
+        // historical payloads are skipped without inventing sessions.
+        var timing = segment
+        timing.records[0].payload = try AppUsageProto.encode(UsageEvent(opening:true,time:1,bundle:"com.example.old"))
+        timing.records[1].payload = try AppUsageProto.encode(UsageEvent(opening:false,time:2,bundle:"com.example.old"))
+        timing.records.append(SegmentRecord(timestamp:700,payload:Data([255])))
+        let fdTiming = open(path.path,O_WRONLY)
+        let timingBytes = try timing.encoded()
+        _ = timingBytes.withUnsafeBytes { pwrite(fdTiming,$0.baseAddress,$0.count,0) }; close(fdTiming)
         let snapshot = try store.readSnapshot()
         try check(snapshot.sessions == [StoredSession(bundle:"com.example.old",start:900,end:2500)],"footer read")
         try check(snapshot.revision.count == 64,"fingerprint")
+        try check(snapshot.sessions.first?.start == 900 && snapshot.sessions.first?.end == 2500,"footer clocks override payload clocks; malformed payload skipped")
+        // Add an older segment whose unchanged session is included in the UI's
+        // whole-day request. It must not be copied to the latest segment.
+        let olderPath = stream.appendingPathComponent("0000000001")
+        let olderRecords = try [UsageEvent(opening:true,time:1200,bundle:"com.example.older"),UsageEvent(opening:false,time:1500,bundle:"com.example.older")].map { SegmentRecord(timestamp:$0.time,payload:try AppUsageProto.encode($0)) }
+        try privateWrite(Segment(created:400,size:4096,records:olderRecords).encoded(),olderPath)
+        let olderOriginal = try boundedBytes(olderPath)
+        let withOlder = try store.readSnapshot()
         let backupID = try store.backup()
-        try check(try store.verifyBackup(backupID) == snapshot.revision,"verified backup")
-        let request = ApplyRequest(start:1000,end:2000,sessions:[StoredSession(bundle:"com.example.new",start:1100,end:1800)],revision:snapshot.revision)
+        try check(try store.verifyBackup(backupID) == withOlder.revision,"verified backup")
+        let request = ApplyRequest(start:1000,end:2000,sessions:[StoredSession(bundle:"com.example.new",start:1100,end:1800),StoredSession(bundle:"com.example.older",start:1200,end:1500)],revision:withOlder.revision)
         let result = try store.apply(request)
         try check(result.ok,"apply")
+        try check(try boundedBytes(olderPath) == olderOriginal,"older segment unchanged")
+        let latestAfter = try Segment.parse(boundedBytes(path))
+        try check(!latestAfter.records.contains { (try? AppUsageProto.decode($0.payload).bundle) == "com.example.older" },"unchanged older session not duplicated into latest")
+
         do {
             let verify = try KnowledgeDatabase(dbURL)
             try check(verify.usageEntity == 11,"iOS entity 11 selected from metadata and usage")

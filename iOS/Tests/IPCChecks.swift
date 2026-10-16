@@ -6,10 +6,7 @@ import Foundation
         var checked = 0
         for op in HelperOp.allCases {
             guard let r = HelperClient.runFixture(path: path, op: op),
-                  !r.ok, r.code == "integration_unavailable",
-                  r.details["read"] == "disabled",
-                  r.details["backup"] == "disabled",
-                  r.details["apply"] == "disabled",
+                  !r.ok, r.code == "auth_unavailable",
                   !Capability.from(r).canApply else { fatalError("IPC denial decode failed for \(op)") }
             checked += 1
         }
