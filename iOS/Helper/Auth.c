@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <crt_externs.h>
+#include <grp.h>
 #include <mach-o/dyld.h>
 extern int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
 extern int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
@@ -30,7 +32,15 @@ static int trusted_path(const char *path) {
     return 1;
 }
 int ste_authorize_caller(void) {
-    if (geteuid() != 0 || strlen(STE_APP_CDHASH) != 40) return 0;
+    // Do not consume caller-controlled environment in privileged storage operations.
+    // dyld/setuid loader protection is still a target-runtime prerequisite.
+    *_NSGetEnviron() = NULL;
+    if (setenv("PATH", "/usr/bin:/bin", 1) || setenv("HOME", "/var/empty", 1) ||
+        setenv("TMPDIR", "/var/empty", 1) || setenv("LANG", "C", 1)) return 0;
+    umask(0077);
+    if (geteuid() != 0 || setgroups(0, NULL) || setgid(0) || setuid(0) ||
+        getuid() != 0 || geteuid() != 0 || getegid() != 0 ||
+        strlen(STE_APP_CDHASH) != 40) return 0;
     pid_t parent = getppid();
     if (parent <= 1) return 0;
     char caller[PATH_MAX], resolved[PATH_MAX], self[PATH_MAX], resolved_self[PATH_MAX];

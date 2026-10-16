@@ -31,6 +31,6 @@ stehelper_INSTALL_PATH = /Applications/ScreenTimeEditor.app
 include $(THEOS_MAKE_PATH)/application.mk
 include $(THEOS_MAKE_PATH)/tool.mk
 
-# Never enable setuid before a separately reviewed authenticated launch contract.
+# Explicitly authorized fixed helper only; archive ownership is numeric root:wheel.
 after-stage::
-	chmod 0755 "$(THEOS_STAGING_DIR)/Applications/ScreenTimeEditor.app/stehelper"
+	chmod 4755 "$(THEOS_STAGING_DIR)/Applications/ScreenTimeEditor.app/stehelper"

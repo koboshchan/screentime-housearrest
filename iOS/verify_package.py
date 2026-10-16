@@ -66,7 +66,9 @@ def verify(package):
     with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
         for entry in archive:
             assert entry.uid == 0 and entry.gid == 0, "Non-root archive ownership"
-            assert not (entry.mode & 0o6000), "setuid/setgid forbidden"
+            helper = entry.name.removeprefix("./") == "Applications/ScreenTimeEditor.app/stehelper"
+            assert entry.mode & 0o7777 == 0o4755 if helper else not (entry.mode & 0o6000), "Unexpected privileged mode"
+            assert not (entry.mode & 0o022), "Writable package entry"
             assert not entry.issym() and not entry.islnk(), "Unexpected package link"
             assert ".." not in Path(entry.name).parts and not entry.name.startswith("/")
     with tempfile.TemporaryDirectory(prefix="ste-package-verify-") as tmp:
@@ -78,7 +80,7 @@ def verify(package):
         assert info["MinimumOSVersion"] == "18.0"
         assert info["CFBundleIdentifier"] == "com.kobosh.screentimeeditor"
         for name in ("ScreenTimeEditor", "stehelper"):
-            assert (app/name).stat().st_mode & 0o7777 == 0o755
+            assert (app/name).stat().st_mode & 0o7777 == (0o4755 if name == "stehelper" else 0o755)
             signature(app/name)
         app_hash = next(line.split("=",1)[1] for line in command("ldid","-h",str(app/"ScreenTimeEditor")).decode().splitlines() if line.startswith("CDHash="))
         assert app_hash.encode() in (app/"stehelper").read_bytes(), "Helper caller pin does not match packaged app"
