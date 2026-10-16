@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Local, read-only-until-certified Screen Time storage backend.
+"""Local Screen Time storage backend using the restored original local writer.
 
 All timestamps exposed by this module use seconds since 2001-01-01 UTC.
-Apple does not publish a transactional writer for these stores. Consequently
-production apply is deliberately disabled, rather than claiming atomicity across
-Biome, CoreData and the live Apple writers. There is no fixture-root CLI switch.
+Apply requires a separately verified backup before writing. The original local
+mechanism does not provide atomicity across Biome and SQLite. No fixture-root
+CLI switch or remote mechanism is provided.
 """
+import importlib.util
 import hashlib
 import json
 import math
@@ -24,7 +25,11 @@ COCOA_OFFSET = 978307200
 MAX_SEGMENT = 64 * 1024 * 1024
 STREAM_CHUNK = 1024 * 1024
 MAX_INPUT = 4 * 1024 * 1024
-APPLY_BLOCK_REASON = "No certified writer or coordinated multi-store rollback is available."
+APPLY_BLOCK_REASON = None
+_MODULE_PATH = Path(__file__).with_name("original_local.py")
+_spec = importlib.util.spec_from_file_location("screentime_original_local", _MODULE_PATH)
+original_local = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(original_local)
 
 class StorageError(Exception):
     def __init__(self, message, code="storage_error"):
@@ -129,10 +134,13 @@ def paired_sessions(events):
     # Stable sort retains source record order for equal timestamps.
     for starting, timestamp, bundle, identity in sorted(events, key=lambda event: event[1]):
         if starting:
-            require(bundle not in opened, "Overlapping unmatched starts prevent a complete AppUsage read.", "incomplete_read")
+            if bundle in opened:
+                warnings.append("Historical unmatched start ignored for " + bundle + ".")
             opened[bundle] = (timestamp, identity)
         else:
-            require(bundle in opened, "Unmatched AppUsage end prevents a complete read.", "incomplete_read")
+            if bundle not in opened:
+                warnings.append("Historical unmatched end ignored for " + bundle + ".")
+                continue
             start, start_id = opened.pop(bundle)
             require(timestamp >= start, "AppUsage end precedes start.", "incomplete_read")
             sid = hashlib.sha256((start_id + "|" + identity).encode()).hexdigest()
@@ -330,8 +338,8 @@ class Engine:
             after = self.fingerprint()
             require(before == after, "Sources changed during read; retry.", "concurrent_change")
             warnings.append("Native Screen Time UI aggregation and cross-device synchronization are not verified.")
-            warnings.append("Apply is disabled: no certified atomic writer for this live Apple storage layout.")
-            return dict(sessions=sessions, revision=after, warnings=warnings, canApply=False, applyBlockReason=APPLY_BLOCK_REASON, supportedWriters=[])
+            warnings.append("Original local writer edits the latest AppUsage segment and knowledgeC using Z_ENT=1; logout is required to refresh. Older segments and cross-device aggregation may retain history.")
+            return dict(sessions=sessions, revision=after, warnings=warnings, canApply=True, applyBlockReason=None, supportedWriters=["original_local"])
         except PermissionError as exc:
             raise StorageError("Permission denied reading local Screen Time stores. Open the signed app locally, add it in System Settings > Privacy & Security > Full Disk Access, then quit and reopen it. No password is requested by this app. Details: " + str(exc), "permission_denied") from exc
         except OSError as exc:
@@ -340,12 +348,29 @@ class Engine:
             raise StorageError("Cannot read knowledgeC: " + str(exc), "read_failed") from exc
 
     def apply(self, request):
-        validate_edit(request)
+        start, end, sessions = validate_edit(request)
         snapshot = self.read()
         require(snapshot["revision"] == request["revision"], "Sources changed since loading; reload before applying.", "stale_revision")
-        # Never write a partial approximation or manufacture success. A backup
-        # alone cannot make multiple live Apple stores transactional.
-        raise StorageError("Apply blocked: Apple writer coordination, CoreData entity allocation and multi-store rollback are not certified for this macOS layout. No data was changed.", "unsupported_write_layout")
+        api = sys.modules.get(__name__)
+        if api is None:
+            # importlib fixture loaders need not register their module.
+            from types import SimpleNamespace
+            api = SimpleNamespace(**globals())
+        plan = original_local.prepare(self, start, end, sessions, api)
+        root = self.home / "Library/Application Support/ScreenTimeEditor/Backups"
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        no_symlink_parents(root)
+        destination = root / str(uuid.uuid4())
+        verified_backup(self, destination)
+        verify_backup(destination, request["revision"])
+        require(self.fingerprint() == request["revision"], "Sources changed after backup; reload before applying.", "stale_revision")
+        try:
+            result = original_local.inject_local(self, plan, api)
+        except Exception as exc:
+            raise StorageError("Apply failed; stores may be partially changed. Verified backup: " + str(destination) + ". Details: " + str(exc), "partial_apply_failed") from exc
+        return dict(status=result, logoutRequired=True, backupPath=str(destination),
+                    warnings=["Log out and back in to refresh Screen Time. No processes were terminated.",
+                              "Original latest-segment/Z_ENT=1 behavior retained; multi-store writes are not atomic and cross-device aggregation is not verified."])
 
 def private_file(path, data):
     fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL |
@@ -366,7 +391,7 @@ def verify_backup(destination, expected_revision=None):
     """Validate a sealed complete snapshot independently before any future writer.
 
     This is tamper detection, not authentication against the owning account.
-    No production writer currently exists. Never infer authorization from this.
+    The local writer requires this verification independently before writing.
     """
     destination = no_symlink_parents(destination)
     info = destination.lstat()
@@ -519,7 +544,7 @@ def status(runner=subprocess.run):
     elif details and "System Integrity Protection status: disabled." in details:
         sip = "disabled"
     return dict(macOS=version or "unknown", build=build or "unknown", sip=sip, sipDetails=details or se,
-                warnings=[error for error in (ve, be) if error], canApply=False, applyBlockReason=APPLY_BLOCK_REASON, supportedWriters=[])
+                warnings=[error for error in (ve, be) if error], canApply=True, applyBlockReason=None, supportedWriters=["original_local"])
 
 def main():
     try:

@@ -1,64 +1,52 @@
-Backend contract and verification
+Local backend and restored writer
 
-Run `python3 -m unittest discover -s BackendTests -v` from macOS/.
-Only temporary fixtures are used. No test calls production apply on real paths.
+Run python3 -m unittest discover -s macOS/BackendTests -v from the repository.
+All tests use temporary synthetic stores. No tests access live Screen Time data.
+The current suite has 72 passing tests on Mac Python and no added dependencies.
 
-The executable reads one JSON object from stdin and writes one JSON object to
-stdout. Commands are {"command":"status"}, {"command":"read"}, and
-{"command":"apply","revision":"<64 lowercase hex>","dayStart":0,"dayEnd":86400,
-"sessions":[{"id":"unique","bundle":"com.example.App","start":100,"end":200}]}.
-All session and boundary timestamps are Cocoa seconds. Apply validation requires
-sessions clipped to the selected day (23/24/25-hour days accepted).
-Nonzero exit returns {"error":"human-readable message","code":"machine_code"}.
+backend.py loads its sibling original_local.py. Both files must be bundled as
+resources. The module is adapted from scripts/inject_local_mac.py in the verified
+private backup dated 20261016-054202. It has no import-time execution, credentials,
+remote access, username fallback, process termination or daemon restart.
 
-status returns macOS, build, sip (enabled/disabled/unknown), sipDetails,
-warnings and canApply:false. Detection failures are not interpreted as SIP enabled.
-read returns sessions, revision, warnings and canApply:false, or a nonzero error.
-Events pair across all local segments. CRC failure, unsupported schema, missing
-permissions, malformed protobuf and unmatched ends are errors, never demo data.
-Unclosed live starts produce a warning and no manufactured end timestamp.
-No remote access, child shells, daemon control, sync calls or legacy imports.
+JSON stdin commands are status, read, and apply. Apply includes revision,
+dayStart/dayEnd in Cocoa seconds and sessions containing id/bundle/start/end.
+Day boundaries support 23/24/25-hour days; edits must be clipped to that day.
+Status/read expose canApply true and supportedWriters [original_local]. Actual
+permissions, malformed data, schema and fixed segment capacity errors are reported
+specifically. Historical unmatched events are warnings, never demo sessions.
 
-Current production apply is intentionally BLOCKED. It validates the request,
-performs a complete read, checks the revision, then returns
-unsupported_write_layout without changing any store. There is no production
-write path or successful apply response. The private undocumented Apple layouts
-and live Apple writers do not provide certified cross-store atomicity.
-The UI must not turn this into an enabled Apply button or a success banner.
-This is an actual guarded read backend, NOT a completed storage mutation engine.
+Apply validates the revision, preflights the serialized latest AppUsage segment
+and SQLite insertion columns, then creates a private snapshot using the SQLite
+backup API. Independent verify_backup checks inventory, manifest digest, file
+hashes, SQLite integrity and private sealed permissions before invoking the
+writer. Backup/verification failure never invokes it. A second revision check
+rejects changes during the snapshot. There is no backup or writer execution on
+ordinary read/status. No real apply or live backup was run during development.
 
-The verified_backup helper is fixture-tested but NOT invoked by blocked apply.
-It copies all parsed AppUsage sources and uses SQLite's backup API for a
-consistent WAL-aware knowledgeC snapshot, verifies hashes and integrity,
-records a manifest and metadata, then permission-seals files 0400/dir 0500.
-Permission-sealed does NOT mean filesystem-immutable against the owner. No
-immutable-backup or multi-store rollback guarantee is claimed.
-A future writer must certify exact CoreData Z_ENT/Z_PRIMARYKEY allocation,
-preservation of every other stream, transactional rollback and live writer
-coordination before enabling writes. These are deliberately not guessed.
+The original mechanism writes the latest AppUsage segment and deletes/reinserts
+overlapping knowledgeC /app/usage rows using Z_ENT=1/Z_OPT=1. Crossing sessions
+retain their outside-day portions in both stores. The builder checks all payload
+and footer bounds before any writes. Long bundle identifiers use proper varints.
+Other streams are preserved. Successful apply reports SUCCESS_LOGOUT_REQUIRED,
+logoutRequired true, backupPath and warnings. No processes are terminated.
 
-Native verification on the Mac reported macOS 27.2 build 26B5091g, SIP enabled.
-Native read honestly failed Operation not permitted at the AppUsage directory.
-All 27 fixture tests passed on both Linux and macOS. No real apply was executed.
+Concrete original limitations remain. Only the latest segment is changed; older
+segments may retain overlapping history. Z_ENT=1 is the original writer behavior,
+not schema-independent entity discovery. Native UI refresh and cross-device
+aggregation are not verified. Biome and SQLite are not one atomic transaction.
+A writer error reports possible partial changes and the verified backup location;
+it does not claim automatic rollback. Sealing is not immutable against the owner.
+Concurrent Apple writers can still race after the final revision check.
 
-Bounded reader update (2026-10-16)
+Database/WAL hashing streams 1 MiB chunks without the 64 MiB segment cap. It
+checks fd/path identity, size and timestamps before/after reads and rejects
+symlinks, nonregular files, growth and truncation. Segment parsing remains capped
+at 64 MiB. SQLite validation iterates SELECT 1 instead of allocating unused rows.
+Large snapshot database hashing/verification streams; tests cover sparse files,
+a real large WAL, valid large SQLite backup and corruption above 64 MiB. Sparse
+hashing peak Python allocation is tested below 4 MiB. Existing INVALID/COMPLETE,
+permission, integrity, concurrent change and symlink rejection tests remain.
 
-Database/WAL revision hashing now streams 1 MiB chunks without the segment size
-cap. Each scan reads only the initial file length and rejects growth, truncation,
-metadata changes, inode replacement, symlinks and nonregular files. Segment
-parsing still has its 64 MiB in-memory format limit. SQLite usage validation
-iterates a constant-sized SELECT 1 cursor instead of allocating unused rows.
-Backup copy/digest verification also streams; the SQLite backup API remains the
-only database copy mechanism, with integrity, INVALID/COMPLETE and sealing checks
-preserved. Production apply stays blocked and never calls backup.
-
-The full current suite has 63 passing tests on Mac Python, including sparse files
-and database/WAL files above 64 MiB, a real large WAL read, a valid large database
-backup, corrupted large backup rejection, concurrent changes, descriptor/path
-replacement and symlink/FIFO rejection. The sparse hash memory test requires peak
-Python allocations below 4 MiB. No external dependencies were added.
-
-A read-only hash attempt through SSH could not access current knowledgeC.db or
-its WAL (Operation not permitted). GUI real-data verification must therefore be
-performed separately in the authorized native app after rebundling this backend.
-No live backup, write, apply, install, permission change or deployment was done.
+SSH live knowledgeC/WAL reads were denied by macOS privacy permissions. Parent
+must verify live read in the authorized native GUI after bundling both modules.

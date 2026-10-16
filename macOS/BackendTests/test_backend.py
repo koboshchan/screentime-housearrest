@@ -64,7 +64,7 @@ class Tests(unittest.TestCase):
     def test_cross_segment_pairing(self):
         read = self.engine.read()
         self.assertEqual([(x["start"],x["end"]) for x in read["sessions"]],[(100,200)])
-        self.assertFalse(read["canApply"])
+        self.assertTrue(read["canApply"])
 
     def test_crc(self):
         path = self.engine.stream / "a"
@@ -103,7 +103,7 @@ class Tests(unittest.TestCase):
 
     def test_unpaired_end(self):
         (self.engine.stream / "a").unlink()
-        with self.assertRaisesRegex(b.StorageError,"Unmatched"): self.engine.read()
+        self.assertTrue(any("unmatched end" in w for w in self.engine.read()["warnings"]))
 
     def test_unclosed_start_warning(self):
         (self.engine.stream / "b").unlink()
@@ -113,7 +113,7 @@ class Tests(unittest.TestCase):
 
     def test_duplicate_start(self):
         (self.engine.stream / "b").write_bytes(segment([(True,150,"com.test.App")]))
-        with self.assertRaises(b.StorageError): self.engine.read()
+        self.assertTrue(self.engine.read()["warnings"])
 
     def test_missing_db_honest(self):
         self.engine.database.unlink()
@@ -128,10 +128,10 @@ class Tests(unittest.TestCase):
         with sqlite3.connect(self.engine.database) as c: c.execute("INSERT INTO ZOBJECT VALUES ('/other',200,300,'keep')")
         with self.assertRaisesRegex(b.StorageError,"changed since"): self.engine.apply(request)
 
-    def test_apply_never_mutates(self):
+    def test_apply_schema_preflight_never_mutates(self):
         request = self.request()
         before = self.engine.fingerprint()
-        with self.assertRaisesRegex(b.StorageError,"Apply blocked"): self.engine.apply(request)
+        with self.assertRaisesRegex(b.StorageError,"insertion columns"): self.engine.apply(request)
         self.assertEqual(before,self.engine.fingerprint())
 
     def test_validation(self):
@@ -312,9 +312,9 @@ class Tests(unittest.TestCase):
     def test_status_capability_contract(self):
         def runner(*a, **k): raise OSError("fixture")
         value = b.status(runner)
-        self.assertFalse(value["canApply"])
-        self.assertEqual(value["supportedWriters"], [])
-        self.assertTrue(value["applyBlockReason"])
+        self.assertTrue(value["canApply"])
+        self.assertEqual(value["supportedWriters"], ["original_local"])
+        self.assertIsNone(value["applyBlockReason"])
         self.assertEqual(self.engine.read()["applyBlockReason"], value["applyBlockReason"])
 
     def test_permission_denied_distinct(self):
