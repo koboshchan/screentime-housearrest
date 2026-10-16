@@ -27,3 +27,25 @@ package.py always refuses packaging with exit 2, including --production; it emit
 RootHide Theos/devkit, signing tools and production packaging remain unresolved; no dependencies were installed for this correction. entitlements.plist is an unvalidated proposal, not applied by build.sh. No device compatibility claim is made.
 
 Correction validation completed successfully on the Mac. 14 pure logic checks passed, all 8 host stub protocol cases passed, packaging refusal passed, and no .deb exists in build/. Both Mach-O files were inspected with vtool and report platform IOS, minos 15.0, sdk 27.2. Compilation emitted two clang incompatible-sysroot warnings mentioning macOS 27.2 while targeting iOS 15.0; the Mach-O platform inspection passed, but this warning remains unresolved. No runtime-on-device claim is made.
+
+## Additional validation, no simulator installation
+
+bash iOS/build.sh
+bash iOS/Tests/snapshot.sh
+python3 iOS/package.py --production
+
+The last command MUST refuse with exit 2; it is not a packaging success. The current build script explicitly selects the macOS SDK for host tests, resolving the earlier sysroot warnings. The final rerun passed without warnings, with 14 logic checks, 8 stub protocol cases, and both iOS Mach-O platform inspections passing.
+
+The screenshot harness uses the exact shared AccessStatusView now included in the iOS screen. It renders the real unavailable-state text with empty sessions using macOS SwiftUI ImageRenderer, without launching the shipping app, spawning the helper, reading databases, or installing anything in a simulator or device. Light and dark PNGs are under build/snapshots/. These are shared-component host renderings, NOT iOS simulator screenshots, full-screen UI tests, or timeline interaction evidence. Both images were visually inspected for readable text, wrapping, clipping and contrast; no clipping found. In-memory-only editing and discard-on-close are now explicitly disclosed.
+
+A fresh tooling check found no theos executable, no ~/theos directory, no ldid and no dpkg-deb on this Mac. No tools were installed. Production packaging therefore cannot be validated here. The original hand-built archive has been retired rather than renamed or presented as a deliverable.
+
+For the eventual approved toolchain setup, follow official roothide/theos and Developer instructions, then use the actual Theos package project with THEOS_PACKAGE_SCHEME=roothide make package. No such project is claimed to exist yet. Do not substitute a handcrafted Architecture field or ordinary Xcode arm64 build for the scheme. Before releasing, inspect the generated archive's control metadata and filesystem layout with dpkg-deb --info PACKAGE.deb and dpkg-deb --contents PACKAGE.deb, inspect every Mach-O's platform/load commands, verify applied entitlements and signatures using the approved signing tools, and validate RootHide's generated relocation/link behavior. The final architecture/layout must come from that verified scheme, not assumptions here. Privileged helper placement/ownership, launch method and caller authentication remain design blockers before a production package can exist. These future steps are instructions, not completed tests.
+
+## Actual host IPC validation
+
+The host build now compiles the actual App/HelperClient.swift with HOST_IPC_TEST, enabling a fixture executable path injection method excluded from the iOS build. Tests spawn the newly built no-I/O helper and exercise the real posix_spawn, stdout pipe, waitpid and Swift JSONDecoder path. All four operations decode a typed integration_unavailable denial with disabled read/backup/apply capabilities. All four reject extra argv as bad_request. Missing executable returns nil. These eight command cases plus missing-executable check passed, alongside the separate eight Python subprocess protocol cases and 14 model checks.
+
+HelperClient now closes the duplicated child pipe writer and rejects signal/unknown exits or mismatched ok/exit-status replies. This validates the stub command contract, NOT root escalation, authenticated production IPC, a live reader or writer. The synchronous transport still lacks a production timeout/cancellation contract and must not be enabled for privileged live work in this state.
+
+No existing .deb is available to parse: the invalid guessed artifact was retired. Parsing a fabricated ar/tar would not establish RootHide compatibility. Packaging remains refused until the official scheme/tooling and privileged layout are verified. No architecture-guessed archive has been recreated, executed, extracted or installed.

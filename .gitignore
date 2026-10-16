@@ -21,3 +21,6 @@ poc/private/
 *.db-wal
 *.segb
 *.deb
+
+# Local verification evidence may contain private host paths.
+**/proof/

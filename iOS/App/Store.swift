@@ -16,7 +16,7 @@ final class Store: ObservableObject {
         }
     }
     // Reading real usage needs the helper's read path, which is not implemented. Never invent sessions.
-    var loadNote: String { "Existing usage cannot be read yet. You can compose sessions, but they stay local until apply is available." }
+    var loadNote: String { "Existing usage cannot be read yet. Composed sessions stay in memory only; closing the app discards them." }
 
     func add(bundleID: String, start: TimeInterval, end: TimeInterval) {
         let s = UsageSession(bundleID: bundleID, start: SessionRules.snap(start), end: SessionRules.snap(end))

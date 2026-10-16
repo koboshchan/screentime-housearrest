@@ -8,8 +8,7 @@ struct ContentView: View {
         NavigationView {
             List {
                 Section {
-                    Text(store.capability.summary).foregroundColor(.secondary)
-                    if store.sessions.isEmpty { Text(store.loadNote).font(.footnote).foregroundColor(.secondary) }
+                    AccessStatusView(summary: store.capability.summary, note: store.loadNote)
                 }
                 if !store.sessions.isEmpty {
                     Section(header: Text("Timeline")) {
