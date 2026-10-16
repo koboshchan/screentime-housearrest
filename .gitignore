@@ -1,0 +1,23 @@
+# Private research, captures, databases, credentials, and all historical binaries.
+poc/private/
+**/.build/
+**/build/
+**/DerivedData/
+**/__pycache__/
+**/*.pyc
+**/.DS_Store
+**/.theos/
+**/packages/
+**/obj/
+**/.swiftpm/
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.mobileprovision
+*.db
+*.db-shm
+*.db-wal
+*.segb
+*.deb
