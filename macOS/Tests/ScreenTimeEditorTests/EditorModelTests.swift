@@ -273,4 +273,18 @@ final class EditorModelTests: XCTestCase {
     }
   }
 
+  func testSafariFragmentsRemainVisibleWhenDailyTotalExceedsMinute() async throws {
+    let m = try await model()
+    let fragments = [28.607, 30.664, 10.825, 59.753].enumerated().map { index, duration in
+      Session(id: "safari-\(index)", bundle: "com.apple.Safari",
+        start: m.dayStart + Double(index) * 100,
+        end: m.dayStart + Double(index) * 100 + duration)
+    }
+    m.sessions = fragments
+    XCTAssertFalse(m.showShortSessions)
+    XCTAssertEqual(m.visibleSessions, fragments)
+    XCTAssertEqual(m.shortSessionCount, 0)
+    XCTAssertTrue(m.bundles.contains("com.apple.Safari"))
+  }
+
 }

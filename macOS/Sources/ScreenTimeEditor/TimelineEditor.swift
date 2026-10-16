@@ -23,7 +23,7 @@ struct TimelineEditor: View {
       }
       if lanes.isEmpty {
         ContentUnavailableView("No minute-long sessions", systemImage: "clock",
-          description: Text("Turn on Show sub-minute sessions in the sidebar to see the short records."))
+          description: Text("Turn on Show apps under 1m total in the sidebar to see the short records."))
       } else {
       GeometryReader { geo in
       let w = max(1, geo.size.width - labelW) * model.timelineZoom

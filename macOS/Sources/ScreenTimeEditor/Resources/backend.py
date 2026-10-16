@@ -379,8 +379,10 @@ class Engine:
             from types import SimpleNamespace
             api = SimpleNamespace(**globals())
         plan = original_local.prepare(self, start, end, sessions, api)
-        # Only an explicit disabled result activates reset; unknown uses logout.
-        reset = self.status_provider().get("sip") == "disabled"
+        # Original LOCAL backend never accesses system Biome or clears DeviceActivity.
+        # Legacy reset is kept only for isolated Python fixtures with explicit paths;
+        # the shipping CLI never accepts these paths or enables this mechanism.
+        reset = self.reset_paths is not None and self.status_provider().get("sip") == "disabled"
         reset_plan = local_reset.prepare(self, start, end, sessions, api, self.reset_paths) if reset else None
         root = self.home / "Library/Application Support/ScreenTimeEditor/Backups"
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -594,7 +596,7 @@ def status(runner=subprocess.run):
     elif details and "System Integrity Protection status: disabled." in details:
         sip = "disabled"
     return dict(macOS=version or "unknown", build=build or "unknown", sip=sip, sipDetails=details or se,
-                warnings=[error for error in (ve, be) if error], canApply=True, applyBlockReason=None, supportedWriters=(["original_local", "sip_off_local_reset"] if sip == "disabled" else ["original_local"]))
+                warnings=[error for error in (ve, be) if error], canApply=True, applyBlockReason=None, supportedWriters=["original_local"])
 
 def main():
     try:

@@ -58,8 +58,14 @@ final class EditorModel {
   // Display filtering only. Hidden records remain in edits, undo and Apply.
   var showShortSessions = false
   var timelineZoom = 1.0
-  var shortSessionCount: Int { sessions.filter { $0.duration < 60 }.count }
-  var visibleSessions: [Session] { showShortSessions ? sessions : sessions.filter { $0.duration >= 60 } }
+  // Judge an app by its whole day's total, not each fragment. Safari can have
+  // several 30-second sessions that together are minutes of real usage.
+  private var shortBundles: Set<String> {
+    let totals = sessions.reduce(into: [String: Double]()) { $0[$1.bundle, default: 0] += $1.duration }
+    return Set(totals.filter { $0.value < 60 }.map(\.key))
+  }
+  var shortSessionCount: Int { sessions.filter { shortBundles.contains($0.bundle) }.count }
+  var visibleSessions: [Session] { showShortSessions ? sessions : sessions.filter { !shortBundles.contains($0.bundle) } }
   var bundles: [String] { Array(Set(visibleSessions.map(\.bundle))).sorted() }
 
   private func key(_ s: Session) -> String { "\(s.bundle)|\(s.start)|\(s.end)" }

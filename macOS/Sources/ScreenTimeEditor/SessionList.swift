@@ -24,7 +24,7 @@ struct SessionList: View {
     }
     .safeAreaInset(edge: .top) {
       VStack(alignment: .leading, spacing: 4) {
-        Toggle("Show sub-minute sessions", isOn: $m.showShortSessions)
+        Toggle("Show apps under 1m total", isOn: $m.showShortSessions)
           .toggleStyle(.checkbox)
         if model.shortSessionCount > 0 {
           Text("\(model.shortSessionCount) short sessions \(model.showShortSessions ? "shown" : "hidden")")
