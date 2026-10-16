@@ -29,7 +29,7 @@ public enum SessionRules {
     public static let minimum: TimeInterval = 60
     public static func isValidBundleID(_ s: String) -> Bool {
         guard s.count >= 3, s.count <= 155, s.contains(".") else { return false }
-        return s.unicodeScalars.allSatisfy { ("a"..."z").contains($0) || ("A"..."Z").contains($0) || ("0"..."9").contains($0) || $0 == "." || $0 == "-" }
+        return s.unicodeScalars.allSatisfy { ("a"..."z").contains($0) || ("A"..."Z").contains($0) || ("0"..."9").contains($0) || $0 == "." || $0 == "-" || $0 == "_" || $0 == "_" || $0 == "_" }
             && !s.hasPrefix(".") && !s.hasSuffix(".") && !s.contains("..")
     }
     public static func validate(_ s: UsageSession) throws {

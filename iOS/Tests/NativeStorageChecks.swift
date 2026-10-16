@@ -117,6 +117,85 @@ import Darwin
             try verify.query("SELECT Z_ENT FROM ZOBJECT WHERE ZSTREAMNAME='/app/usage'") { row in entityOK = entityOK && sqlite3_column_int(row,0) == 1 }
             try check(entityOK,"Mac fixture inserted entity 1")
         }
+
+        try check(SessionRules.isValidBundleID("com.example_with_under.app"),"underscore bundle parity")
+        let parity = base.appendingPathComponent("parity")
+        try FileManager.default.createDirectory(at:parity,withIntermediateDirectories:false)
+        let usageDir = parity.appendingPathComponent("usage"), lockDir = parity.appendingPathComponent("locks")
+        let groups = parity.appendingPathComponent("groups")
+        let cache = groups.appendingPathComponent(UUID().uuidString+"/Library/com.apple.DeviceActivity/Local")
+        for dir in [usageDir,lockDir,cache] { try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true) }
+        let cacheFile = cache.appendingPathComponent("day.plist")
+        try privateWrite(Data("original cache".utf8),cacheFile)
+        let parityDB = parity.appendingPathComponent("knowledgeC.db")
+        var connection: OpaquePointer?
+        try check(sqlite3_open(parityDB.path,&connection) == SQLITE_OK,"parity database")
+        try check(sqlite3_exec(connection,"CREATE TABLE Z_PRIMARYKEY (Z_ENT INTEGER PRIMARY KEY,Z_NAME TEXT); INSERT INTO Z_PRIMARYKEY VALUES (43,'Usage'),(72,'Lock'); CREATE TABLE ZOBJECT (Z_PK INTEGER PRIMARY KEY,Z_ENT INTEGER,Z_OPT INTEGER,ZSTREAMNAME TEXT,ZSTARTDATE REAL,ZENDDATE REAL,ZVALUESTRING TEXT,ZVALUEDOUBLE REAL,ZCREATIONDATE REAL); INSERT INTO ZOBJECT VALUES(1,43,1,'/app/usage',-100,0,'com.preceding.app',NULL,-100); INSERT INTO ZOBJECT VALUES(2,72,1,'/device/isLocked',-100,500,NULL,1,-100);",nil,nil,nil) == SQLITE_OK,"dynamic lock schema")
+        sqlite3_close(connection)
+        let usagePath = usageDir.appendingPathComponent("dynamic-name")
+        let boundaryEvents = [UsageEvent(opening:true,time:-100,bundle:"com.preceding.app"),UsageEvent(opening:false,time:-0.0,bundle:"com.preceding.app")]
+        let boundaryRecords = try boundaryEvents.map { SegmentRecord(timestamp:$0.time,payload:try AppUsageProto.encode($0)) }
+        try privateWrite(Segment(created:-200,size:8192,records:boundaryRecords).encoded(),usagePath)
+        let lockPath = lockDir.appendingPathComponent("not-a-hardcoded-segment")
+        try privateWrite(Segment(created:-200,size:8192,records:[SegmentRecord(timestamp:-100,payload:Data([8,1])),SegmentRecord(timestamp:500,payload:Data([8,0]))]).encoded(),lockPath)
+        var calls: [[String]] = []
+        let parityStore = NativeStorage(database:parityDB,stream:usageDir,backups:parity.appendingPathComponent("Backups"),lockStream:lockDir,groupRoot:groups,runner:{ calls.append($0) })
+        let initialParity = try parityStore.readSnapshot()
+        let edit = ApplyRequest(start:0.0,end:300,sessions:[StoredSession(bundle:"com.example_with_under.app",start:60,end:180)],revision:initialParity.revision)
+        let parityResult = try parityStore.apply(edit)
+        try check(parityResult.ok && calls == [["Preferences","ScreenTimeSettingsAgent"]],"fixed refresh fake runner")
+        try check(try FileManager.default.contentsOfDirectory(atPath:cache.path).isEmpty,"dynamic DeviceActivity cache cleared")
+        let boundaryAfter = try parityStore.readSnapshot()
+        try check(boundaryAfter.sessions.contains(StoredSession(bundle:"com.preceding.app",start:-100,end:0)),"end equal request start preserves closing event signed zero")
+        let lockAfter = try Segment.parse(boundedBytes(lockPath))
+        try check(lockAfter.records.contains { $0.timestamp == 60 && $0.payload == Data([8,0]) },"system lock unlock event")
+        try check(lockAfter.records.contains { $0.timestamp == 180 && $0.payload == Data([8,1]) },"system lock closing event")
+        let parityBackup = parity.appendingPathComponent("Backups").appendingPathComponent(parityResult.details["backupID"]!)
+        let manifest = try JSONDecoder().decode(BackupManifest.self,from:boundedBytes(parityBackup.appendingPathComponent("manifest.json")))
+        try check(manifest.files.contains { $0.name.hasPrefix("lock-") } && manifest.files.contains { $0.name.hasPrefix("cache-") },"all lock and cache stores backed up")
+        try check(manifest.files.allSatisfy { $0.mode > 0 } && !manifest.directories.isEmpty,"ownership mode directory metadata backed up")
+        try check(try parityStore.verifyBackup(parityResult.details["backupID"]!) == initialParity.revision,"full parity backup independently verified")
+        do {
+            let verify = try KnowledgeDatabase(parityDB)
+            var unlocked = 0, outsideLocks = 0
+            try verify.query("SELECT COUNT(*) FROM ZOBJECT WHERE ZSTREAMNAME='/device/isLocked' AND Z_ENT=72 AND ZVALUEDOUBLE=0 AND ZSTARTDATE=60 AND ZENDDATE=180") { row in unlocked = Int(sqlite3_column_int(row,0)) }
+            try verify.query("SELECT COUNT(*) FROM ZOBJECT WHERE ZSTREAMNAME='/device/isLocked' AND (ZSTARTDATE=-100 OR ZENDDATE=500)") { row in outsideLocks = Int(sqlite3_column_int(row,0)) }
+            try check(unlocked == 1 && outsideLocks == 2,"dynamic lock entity and boundary preservation")
+        }
+        let beforeMutation = try boundedBytes(usagePath)
+        let fresh = try parityStore.readSnapshot()
+        var mutationEdit = edit; mutationEdit.revision = fresh.revision
+        parityStore.duringBackup = {
+            let f = open(cache.appendingPathComponent("new.plist").path,O_WRONLY|O_CREAT,0o600); close(f)
+        }
+        var mutationCode = ""
+        do { _ = try parityStore.apply(mutationEdit) } catch let e as StorageFailure { mutationCode = e.code }
+        try check(mutationCode == "stale_revision","mutation during backup preserves stale_revision")
+        try check(try boundedBytes(usagePath) == beforeMutation && calls.count == 1,"mutation backup fails before writes cache deletion or refresh")
+        parityStore.duringBackup = nil
+        try FileManager.default.removeItem(at:cache.appendingPathComponent("new.plist"))
+        let transactionSnap = try parityStore.readSnapshot()
+        mutationEdit.revision = transactionSnap.revision
+        parityStore.beforeTransactionWrite = {
+            let f = open(cache.appendingPathComponent("race.plist").path,O_WRONLY|O_CREAT,0o600); close(f)
+        }
+        mutationCode = ""
+        do { _ = try parityStore.apply(mutationEdit) } catch let e as StorageFailure { mutationCode = e.code }
+        try check(mutationCode == "stale_revision","transaction prewrite stale not catchwrapped")
+        try check(try boundedBytes(usagePath) == beforeMutation && calls.count == 1,"prewrite stale has no usage mutation or refresh")
+        parityStore.beforeTransactionWrite = nil
+
+        try FileManager.default.removeItem(at:cache.appendingPathComponent("race.plist"))
+        let zeroOlderPath = usageDir.appendingPathComponent("000-older")
+        let zeroEvents = [UsageEvent(opening:true,time:-0.0,bundle:"com.zero.app"),UsageEvent(opening:false,time:100,bundle:"com.zero.app")]
+        let zeroRecords = try zeroEvents.map { SegmentRecord(timestamp:$0.time,payload:try AppUsageProto.encode($0)) }
+        try privateWrite(Segment(created:-200,size:8192,records:zeroRecords).encoded(),zeroOlderPath)
+        let zeroSnapshot = try parityStore.readSnapshot()
+        let zeroEdit = ApplyRequest(start:0,end:300,sessions:[StoredSession(bundle:"com.zero.app",start:0.0,end:100)],revision:zeroSnapshot.revision)
+        _ = try parityStore.apply(zeroEdit)
+        let latestZero = try Segment.parse(boundedBytes(usagePath))
+        try check(!latestZero.records.contains { (try? AppUsageProto.decode($0.payload).bundle) == "com.zero.app" },"signed-zero older key does not duplicate")
+        try check(try parityStore.readSnapshot().sessions.filter { $0.bundle == "com.zero.app" }.count == 1,"signed-zero older session retained once")
         let response = try StorageProtocol.handle(HelperRequest(op:.read),storage:store)
         try check(response.ok && response.details["snapshot"] != nil,"read protocol")
         do {
