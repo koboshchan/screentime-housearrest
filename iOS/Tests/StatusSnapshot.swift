@@ -8,7 +8,7 @@ struct StatusSnapshot {
         for (name, scheme) in [("light", ColorScheme.light), ("dark", ColorScheme.dark)] {
             let content = AccessStatusView(
                 summary: Capability.from(HelperReply(ok: false, code: "integration_unavailable",
-                    message: "RootHide integration, authenticated caller transport, and consistent backup coordination are not implemented.")).summary,
+                    message: "This build cannot connect to protected Screen Time data or save changes. Device integration and verified backups are not available yet.")).summary,
                 note: "Existing usage cannot be read yet. Composed sessions stay in memory only; closing the app discards them.")
                 .padding(24).frame(width: 390)
                 .background(scheme == .dark ? Color.black : Color.white)

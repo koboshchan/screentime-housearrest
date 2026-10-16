@@ -7,8 +7,8 @@ struct AccessStatusView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Live access unavailable").font(.headline)
-            Text(summary).foregroundColor(.secondary)
-            Text(note).font(.footnote).foregroundColor(.secondary)
+            Text(summary.replacingOccurrences(of: "Live access unavailable. ", with: "")).foregroundColor(.primary)
+            Text(note).font(.subheadline).foregroundColor(.primary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)

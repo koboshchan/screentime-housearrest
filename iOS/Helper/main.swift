@@ -14,5 +14,5 @@ guard args.count == 2, HelperOp(rawValue: args[1]) != nil else {
     reply(HelperReply(ok: false, code: "bad_request", message: "Expected exactly one known operation."))
 }
 reply(HelperReply(ok: false, code: "integration_unavailable",
-    message: "Live access is disabled. RootHide integration, authenticated caller transport, and consistent backup coordination are not implemented.",
+    message: "This build cannot connect to protected Screen Time data or save changes. Device integration and verified backups are not available yet.",
     details: ["read": "disabled", "backup": "disabled", "apply": "disabled", "build": "compile-validation-only"]))
