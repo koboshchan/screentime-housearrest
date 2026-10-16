@@ -119,6 +119,7 @@ func privateCopy(_ source: URL, _ target: URL) throws {
 }
 final class KnowledgeDatabase {
     var db: OpaquePointer?
+    var usageEntity: Int32 = 0
     init(_ path: URL, writable: Bool = false) throws {
         try rejectLinks(path)
         let fd = try regularFD(path); close(fd)
@@ -132,6 +133,26 @@ final class KnowledgeDatabase {
             if let value = sqlite3_column_text(statement,1) { columns.insert(String(cString:value)) }
         }
         try requireStorage(Set(["Z_ENT","Z_OPT","ZSTREAMNAME","ZSTARTDATE","ZENDDATE","ZVALUESTRING","ZCREATIONDATE"]).isSubset(of:columns),"Unsupported knowledgeC schema.","unsupported_schema")
+        // Never borrow the macOS entity number. Existing usage rows must agree,
+        // and Core Data metadata must identify that concrete entity.
+        var entities = Set<Int32>()
+        try query("SELECT DISTINCT Z_ENT FROM ZOBJECT WHERE ZSTREAMNAME='/app/usage'") { row in
+            try requireStorage(sqlite3_column_type(row,0) == SQLITE_INTEGER,"Usage entity is not an integer.","unsupported_schema")
+            entities.insert(sqlite3_column_int(row,0))
+        }
+        try requireStorage(entities.count == 1,"Cannot unambiguously resolve the usage entity from existing usage rows.","unsupported_schema")
+        usageEntity = entities.first!
+        try requireStorage(usageEntity > 0,"Invalid usage entity.","unsupported_schema")
+        var metadataMatches = 0
+        try query("SELECT Z_ENT,Z_NAME FROM Z_PRIMARYKEY") { row in
+            if sqlite3_column_int(row,0) == self.usageEntity {
+                guard let name = sqlite3_column_text(row,1), !String(cString:name).isEmpty else {
+                    throw StorageFailure("unsupported_schema","Usage entity metadata is unnamed.")
+                }
+                metadataMatches += 1
+            }
+        }
+        try requireStorage(metadataMatches == 1,"Usage entity metadata is missing or ambiguous.","unsupported_schema")
     }
     deinit { if let db { sqlite3_close(db) } }
     func execute(_ sql: String) throws {
@@ -166,11 +187,11 @@ final class KnowledgeDatabase {
         try query("DELETE FROM ZOBJECT WHERE ZSTREAMNAME='/app/usage' AND ZENDDATE>? AND ZSTARTDATE<?",parameters:[start,end]) { _ in }
         for s in sessions {
             var stmt: OpaquePointer?
-            try requireStorage(sqlite3_prepare_v2(db,"INSERT INTO ZOBJECT (Z_ENT,Z_OPT,ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUESTRING,ZCREATIONDATE) VALUES (1,1,'/app/usage',?,?,?,?)",-1,&stmt,nil) == SQLITE_OK,"Cannot prepare usage insertion.","unsupported_schema")
+            try requireStorage(sqlite3_prepare_v2(db,"INSERT INTO ZOBJECT (Z_ENT,Z_OPT,ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUESTRING,ZCREATIONDATE) VALUES (?,1,'/app/usage',?,?,?,?)",-1,&stmt,nil) == SQLITE_OK,"Cannot prepare usage insertion.","unsupported_schema")
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_double(stmt,1,s.start); sqlite3_bind_double(stmt,2,s.end)
+            sqlite3_bind_int(stmt,1,usageEntity); sqlite3_bind_double(stmt,2,s.start); sqlite3_bind_double(stmt,3,s.end)
             let transient = unsafeBitCast(-1,to:sqlite3_destructor_type.self)
-            sqlite3_bind_text(stmt,3,s.bundle,-1,transient); sqlite3_bind_double(stmt,4,s.start)
+            sqlite3_bind_text(stmt,4,s.bundle,-1,transient); sqlite3_bind_double(stmt,5,s.start)
             try requireStorage(sqlite3_step(stmt) == SQLITE_DONE,"Cannot insert usage row.","database_failed")
         }
     }

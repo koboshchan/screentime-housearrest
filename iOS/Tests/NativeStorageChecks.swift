@@ -21,7 +21,7 @@ import Darwin
         try FileManager.default.createDirectory(at:stream,withIntermediateDirectories:false)
         var db: OpaquePointer?
         try check(sqlite3_open(dbURL.path,&db) == SQLITE_OK,"fixture db")
-        try check(sqlite3_exec(db,"CREATE TABLE ZOBJECT (Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZSTREAMNAME TEXT, ZSTARTDATE REAL, ZENDDATE REAL, ZVALUESTRING TEXT, ZCREATIONDATE REAL); INSERT INTO ZOBJECT VALUES(1,1,1,'/app/usage',900,2500,'com.example.old',900);",nil,nil,nil) == SQLITE_OK,"schema")
+        try check(sqlite3_exec(db,"CREATE TABLE Z_PRIMARYKEY (Z_ENT INTEGER PRIMARY KEY,Z_NAME TEXT); INSERT INTO Z_PRIMARYKEY VALUES (11,'Event'); CREATE TABLE ZOBJECT (Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, Z_OPT INTEGER, ZSTREAMNAME TEXT, ZSTARTDATE REAL, ZENDDATE REAL, ZVALUESTRING TEXT, ZCREATIONDATE REAL); INSERT INTO ZOBJECT VALUES(1,11,1,'/app/usage',900,2500,'com.example.old',900); INSERT INTO ZOBJECT VALUES(2,99,1,'/device/isLocked',1100,1800,'unrelated',1100);",nil,nil,nil) == SQLITE_OK,"schema")
         sqlite3_close(db)
         let a = UsageEvent(opening:true,time:900,bundle:"com.example.old"), b = UsageEvent(opening:false,time:2500,bundle:"com.example.old")
         let records = try [a,b].map { SegmentRecord(timestamp:$0.time,payload:try AppUsageProto.encode($0)) }
@@ -37,6 +37,15 @@ import Darwin
         let request = ApplyRequest(start:1000,end:2000,sessions:[StoredSession(bundle:"com.example.new",start:1100,end:1800)],revision:snapshot.revision)
         let result = try store.apply(request)
         try check(result.ok,"apply")
+        do {
+            let verify = try KnowledgeDatabase(dbURL)
+            try check(verify.usageEntity == 11,"iOS entity 11 selected from metadata and usage")
+            var entityOK = true, unrelated = 0
+            try verify.query("SELECT Z_ENT FROM ZOBJECT WHERE ZSTREAMNAME='/app/usage'") { row in entityOK = entityOK && sqlite3_column_int(row,0) == 11 }
+            try verify.query("SELECT COUNT(*) FROM ZOBJECT WHERE ZSTREAMNAME='/device/isLocked' AND Z_ENT=99 AND ZVALUESTRING='unrelated'") { row in unrelated = Int(sqlite3_column_int(row,0)) }
+            try check(entityOK,"all inserted iOS rows retain entity 11")
+            try check(unrelated == 1,"unrelated overlapping lock row retained")
+        }
         try check(result.details["backupID"] != backupID,"fresh backup each apply")
         let after = try store.readSnapshot()
         try check(after.sessions.contains(StoredSession(bundle:"com.example.old",start:900,end:1000)),"left crossing")
@@ -70,8 +79,30 @@ import Darwin
         try FileManager.default.removeItem(at:link)
         let invalid = ApplyRequest(start:1000,end:2000,sessions:[StoredSession(bundle:"bad/../../id",start:1100,end:1800)],revision:after.revision,overrideSourceChanges:true)
         try rejects("invalid id rejected") { _ = try store.apply(invalid) }
+        do {
+            let change = try KnowledgeDatabase(dbURL,writable:true)
+            try change.execute("UPDATE Z_PRIMARYKEY SET Z_ENT=1 WHERE Z_ENT=11; UPDATE ZOBJECT SET Z_ENT=1 WHERE ZSTREAMNAME='/app/usage'")
+        }
+        do {
+            let macSchema = try KnowledgeDatabase(dbURL)
+            try check(macSchema.usageEntity == 1,"Mac fixture entity 1 resolved rather than hardcoded")
+        }
+        let macSnapshot = try store.readSnapshot()
+        let macRequest = ApplyRequest(start:1000,end:2000,sessions:[StoredSession(bundle:"com.example.mac",start:1200,end:1900)],revision:macSnapshot.revision)
+        _ = try store.apply(macRequest)
+        do {
+            let verify = try KnowledgeDatabase(dbURL)
+            var entityOK = true
+            try verify.query("SELECT Z_ENT FROM ZOBJECT WHERE ZSTREAMNAME='/app/usage'") { row in entityOK = entityOK && sqlite3_column_int(row,0) == 1 }
+            try check(entityOK,"Mac fixture inserted entity 1")
+        }
         let response = try StorageProtocol.handle(HelperRequest(op:.read),storage:store)
         try check(response.ok && response.details["snapshot"] != nil,"read protocol")
+        do {
+            let change = try KnowledgeDatabase(dbURL,writable:true)
+            try change.execute("DELETE FROM Z_PRIMARYKEY")
+        }
+        try rejects("missing entity metadata fails closed") { _ = try store.readSnapshot() }
         print("PASS native storage \(count) checks, temporary synthetic stores only")
     }
 }
