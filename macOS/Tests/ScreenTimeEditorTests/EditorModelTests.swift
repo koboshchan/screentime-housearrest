@@ -29,7 +29,7 @@ final class EditorModelTests: XCTestCase {
         print(json.dumps({"sessions":[{"id":"a","bundle":"com.x.a","start":s+3600,"end":s+7200},{"id":"b","bundle":"com.x.b","start":s+10800,"end":s+14400}],"revision":"r1","canApply":\(canApply ? "True" : "False")}))
     elif c == "apply":
         open(r"\(logPath)","a").write("x")
-        print(json.dumps({"backup":"/tmp/fixture-backup","status":"ok"}))
+        print(json.dumps({"backupPath":"/tmp/fixture-backup","status":"SUCCESS_LOGOUT_REQUIRED","logoutRequired":True}))
     """
     try py.write(to: url, atomically: true, encoding: .utf8)
     return url
@@ -108,7 +108,7 @@ final class EditorModelTests: XCTestCase {
     var s = m.sessions[0]; s.end += 600; m.commitEdit(s)
     await m.apply()
     XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("apply.log").path))
-    XCTAssertTrue(m.applyMessage?.contains("/tmp/fixture-backup") == true); XCTAssertTrue(m.applyMessage?.contains("Log out") == true)
+    XCTAssertTrue(m.applyMessage?.contains("/tmp/fixture-backup") == true); XCTAssertTrue(m.applyMessage?.contains("Log out") == true); XCTAssertFalse(m.applyMessage?.contains("SUCCESS_LOGOUT") == true)
   }
   func testReadCheckReportPrivateAndSanitized() async throws {
     let m = try await model()
@@ -120,5 +120,20 @@ final class EditorModelTests: XCTestCase {
     XCTAssertEqual((d[.posixPermissions] as? Int) ?? 0, 0o700)
     let text = try String(contentsOf: url, encoding: .utf8)
     XCTAssertFalse(text.contains("com.x.a")); XCTAssertTrue(text.contains("\"sessionCount\" : 2"))
+  }
+  func testReadCheckFreshMissingReportAndSymlinkSafety() async throws {
+    let m = try await model()
+    let url = dir.appendingPathComponent("fresh/Logs/read-check.json")
+    XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    try ReadCheck.write(m, to: url)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+    // overwrite existing
+    try ReadCheck.write(m, to: url)
+    // symlink at report path is replaced, target untouched
+    let target = dir.appendingPathComponent("victim.txt"); try "keep".write(to: target, atomically: true, encoding: .utf8)
+    let link = dir.appendingPathComponent("fresh/Logs/link.json")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+    XCTAssertThrowsError(try ReadCheck.write(m, to: link))
+    XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "keep")
   }
 }

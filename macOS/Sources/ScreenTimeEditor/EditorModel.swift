@@ -161,8 +161,10 @@ final class EditorModel {
         applyMessage = "The backend did not report a backup, so this change is not confirmed. Reload before trying again."
         stale = true; return
       }
-      let st = (r.status ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-      applyMessage = "Backup saved at \(backup). Backend status: \(st.isEmpty ? "none reported" : st). Log out and back in, or restart, for Screen Time to show the change."
+      let raw = (r.status ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+      let needsLogout = r.logoutRequired ?? true || raw.uppercased().contains("LOGOUT_REQUIRED")
+      let st = raw.uppercased().hasPrefix("SUCCESS") ? "applied" : (raw.isEmpty ? "none reported" : raw)
+      applyMessage = "Backup saved at \(backup). Status: \(st)." + (needsLogout ? " Log out and back in, or restart, for Screen Time to show the change." : "")
       await load()
     } catch { applyMessage = "Not applied: \(error.localizedDescription)" }
   }

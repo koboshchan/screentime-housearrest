@@ -50,7 +50,8 @@ enum ReadCheck {
     let data = try JSONSerialization.data(withJSONObject: report(m), options: [.prettyPrinted, .sortedKeys])
     let tmp = dir.appendingPathComponent(".read-check.\(UUID().uuidString).tmp")
     guard fm.createFile(atPath: tmp.path, contents: data, attributes: [.posixPermissions: 0o600]) else { throw CocoaError(.fileWriteUnknown) }
-    _ = try fm.replaceItemAt(url, withItemAt: tmp)
+    // rename(2) is atomic whether or not the report exists, and replaces a symlink itself rather than following it.
+    guard rename(tmp.path, url.path) == 0 else { let e = errno; try? fm.removeItem(at: tmp); throw POSIXError(POSIXErrorCode(rawValue: e) ?? .EIO) }
     try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     return url
   }
