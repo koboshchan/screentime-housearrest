@@ -1,0 +1,3 @@
+#!/bin/sh
+# Numeric owner normalization without root/fakeroot or host ownership changes.
+exec dpkg-deb --root-owner-group "$@"
