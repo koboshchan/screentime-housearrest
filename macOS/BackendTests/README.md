@@ -2,7 +2,7 @@ Local backend and restored writer
 
 Run python3 -m unittest discover -s macOS/BackendTests -v from the repository.
 All tests use temporary synthetic stores. No tests access live Screen Time data.
-The current suite has 72 passing tests on Mac Python and no added dependencies.
+The current suite has 73 passing tests on Mac Python and no added dependencies.
 
 backend.py loads its sibling original_local.py. Both files must be bundled as
 resources. The module is adapted from scripts/inject_local_mac.py in the verified
@@ -50,3 +50,5 @@ permission, integrity, concurrent change and symlink rejection tests remain.
 
 SSH live knowledgeC/WAL reads were denied by macOS privacy permissions. Parent
 must verify live read in the authorized native GUI after bundling both modules.
+
+A next-day boundary regression verifies that a session beginning exactly at the edited day end survives the latest-segment rewrite unchanged.
