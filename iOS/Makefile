@@ -11,7 +11,8 @@ include $(THEOS)/makefiles/common.mk
 
 APPLICATION_NAME = ScreenTimeEditor
 ScreenTimeEditor_FILES = $(wildcard Core/*.swift App/*.swift)
-ScreenTimeEditor_FRAMEWORKS = UIKit SwiftUI Foundation
+ScreenTimeEditor_FRAMEWORKS = UIKit SwiftUI Foundation CryptoKit
+ScreenTimeEditor_LIBRARIES = sqlite3 z
 ScreenTimeEditor_RESOURCE_FILES = App/Info.plist
 ScreenTimeEditor_CODESIGN_FLAGS = -Sentitlements.plist
 ScreenTimeEditor_SWIFT_VERSION = 5
@@ -21,7 +22,8 @@ TOOL_NAME = stehelper
 stehelper_FILES = $(wildcard Core/*.swift Helper/*.swift Helper/*.c)
 stehelper_SWIFTFLAGS = -D STE_CALLER_AUTH
 stehelper_CFLAGS = -DSTE_APP_CDHASH=\"$(STE_APP_CDHASH)\"
-stehelper_FRAMEWORKS = Foundation
+stehelper_FRAMEWORKS = Foundation CryptoKit
+stehelper_LIBRARIES = sqlite3 z
 stehelper_CODESIGN_FLAGS = -Shelper-entitlements.plist
 stehelper_SWIFT_VERSION = 5
 stehelper_INSTALL_PATH = /Applications/ScreenTimeEditor.app
