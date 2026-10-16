@@ -86,9 +86,9 @@ public enum Capability: Equatable {
     /// Fail closed: only an explicit, fully ok probe reply with supported schema enables apply.
     public static func from(_ r: HelperReply?) -> Capability {
         guard let r else { return .unknown("Helper did not answer.") }
-        guard r.ok, r.code == ready, r.details[root] == 1,
-              r.details[schema] == supported, r.details[protocol] == native-v1,
-              r.details[authenticated] == 1, r.details[writer] == original_local_native else {
+        guard r.ok, r.code == "ready", r.details["root"] == "1",
+              r.details["schema"] == "supported", r.details["protocol"] == "native-v1",
+              r.details["authenticated"] == "1", r.details["writer"] == "original_local_native" else {
             return .readOnly(r.message)
         }
         return .ready
