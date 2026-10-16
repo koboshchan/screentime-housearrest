@@ -14,6 +14,7 @@ ScreenTimeEditor_FILES = $(wildcard Core/*.swift App/*.swift)
 ScreenTimeEditor_FRAMEWORKS = UIKit SwiftUI Foundation CryptoKit
 ScreenTimeEditor_LIBRARIES = sqlite3 z
 ScreenTimeEditor_RESOURCE_FILES = App/Info.plist
+ScreenTimeEditor_RESOURCE_DIRS = build/icon-resources
 ScreenTimeEditor_CODESIGN_FLAGS = -Sentitlements.plist
 ScreenTimeEditor_SWIFT_VERSION = 5
 ScreenTimeEditor_INSTALL_PATH = /Applications
@@ -30,6 +31,9 @@ stehelper_INSTALL_PATH = /Applications/ScreenTimeEditor.app
 
 include $(THEOS_MAKE_PATH)/application.mk
 include $(THEOS_MAKE_PATH)/tool.mk
+
+before-all::
+	bash ../macOS/scripts/compile-icon.sh iphoneos build/icon-resources
 
 # Explicitly authorized fixed helper only; archive ownership is numeric root:wheel.
 after-stage::

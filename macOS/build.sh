@@ -21,6 +21,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 EOF
+bash scripts/compile-icon.sh macosx "$APP/Contents/Resources" "$APP/Contents/Info.plist"
 # Reuse the pinned keychain identity; never silently replace it with ad-hoc signing.
 bash scripts/signing.sh --sign "$APP"
 python3 scripts/verify_deployment.py macos

@@ -16,6 +16,7 @@ xcrun --sdk iphoneos swiftc -sdk "$SDK" -target "$T" -O -parse-as-library -o "$A
 xcrun --sdk iphoneos clang -isysroot "$SDK" -target "$T" -c Helper/Auth.c -o "$OUT/Auth-production.o"
 xcrun --sdk iphoneos swiftc -sdk "$SDK" -target "$T" -O -D STE_CALLER_AUTH -o "$APP/stehelper" Core/*.swift Helper/main.swift "$OUT/Auth-production.o" -framework CryptoKit -lsqlite3 -lz
 cp App/Info.plist "$APP/Info.plist"
+bash ../macOS/scripts/compile-icon.sh iphoneos "$APP" "$APP/Info.plist"
 xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -O -o "$OUT/tests" Core/Model.swift Tests/main.swift
 "$OUT/tests"
 # Host denial helper has no auth define, so exits before any storage access.
