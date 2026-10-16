@@ -293,6 +293,8 @@ class Engine:
             warnings.append("Native Screen Time UI aggregation and cross-device synchronization are not verified.")
             warnings.append("Apply is disabled: no certified atomic writer for this live Apple storage layout.")
             return dict(sessions=sessions, revision=after, warnings=warnings, canApply=False, applyBlockReason=APPLY_BLOCK_REASON, supportedWriters=[])
+        except PermissionError as exc:
+            raise StorageError("Permission denied reading local Screen Time stores. Open the signed app locally, add it in System Settings > Privacy & Security > Full Disk Access, then quit and reopen it. No password is requested by this app. Details: " + str(exc), "permission_denied") from exc
         except OSError as exc:
             raise StorageError("Cannot read local Screen Time stores: " + str(exc), "read_failed") from exc
         except sqlite3.Error as exc:

@@ -335,5 +335,24 @@ class Tests(unittest.TestCase):
         self.unseal_file(dest, "COMPLETE", b.hashlib.sha256(raw).hexdigest().encode())
         with self.assertRaisesRegex(b.StorageError, "integrity"): b.verify_backup(dest)
 
+    def test_read_directory_enumeration_permission_denied(self):
+        from unittest.mock import patch
+        with patch.object(Path, "iterdir", side_effect=PermissionError("fixture enumeration denied")):
+            with self.assertRaises(b.StorageError) as caught: self.engine.read()
+            self.assertEqual(caught.exception.code, "permission_denied")
+            self.assertIn("Full Disk Access", str(caught.exception))
+
+    def test_read_segment_permission_denied(self):
+        from unittest.mock import patch
+        with patch.object(b, "checked_bytes", side_effect=PermissionError("fixture open denied")):
+            with self.assertRaises(b.StorageError) as caught: self.engine.read()
+            self.assertEqual(caught.exception.code, "permission_denied")
+
+    def test_other_read_oserror_not_permission(self):
+        from unittest.mock import patch
+        with patch.object(b, "checked_bytes", side_effect=OSError("fixture IO failure")):
+            with self.assertRaises(b.StorageError) as caught: self.engine.read()
+            self.assertEqual(caught.exception.code, "read_failed")
+
 if __name__ == "__main__":
     unittest.main()

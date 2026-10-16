@@ -14,7 +14,7 @@ PATTERNS = {
     "credential literal": re.compile(r"""(?ix)\b(?:password|passwd|sudo_pass|sshpass|api_key|access_token)\b\s*[:=]\s*["'][^"'\n]{3,}["']"""),
     "sudo password pipe": re.compile(r"(?i)echo\s+.+\|\s*(?:sudo|.*sudo\s+-S)"),
 }
-EXCLUDED = {".git", ".build", "build", "DerivedData", "__pycache__", ".theos", "packages"}
+EXCLUDED = {".git", ".build", "build", "DerivedData", "__pycache__", ".theos", "packages", ".DS_Store"}
 def main():
     problems = []
     tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0")
@@ -22,8 +22,8 @@ def main():
     if (ROOT / "poc").exists():
         problems.append({"path": "poc", "reason": "removed research folder must not return"})
     count = 0
-    for folder in ("macOS", "iOS"):
-        for p in (ROOT / folder).rglob("*"):
+    for folder in (".",):
+        for p in ROOT.rglob("*"):
             rel = p.relative_to(ROOT).as_posix()
             if rel.startswith(PRIVATE) or any(part in EXCLUDED for part in p.parts):
                 continue
