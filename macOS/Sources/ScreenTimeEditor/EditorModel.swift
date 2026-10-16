@@ -76,7 +76,7 @@ final class EditorModel {
     #else
     let url: URL? = nil   // only the offscreen test harness builds without SwiftPM; it uses init(scriptURL:)
     #endif
-    if let url { backend = Backend(scriptURL: url) } else { backend = nil; loadError = "The bundled backend is missing." }
+    if let url { backend = Backend(scriptURL: url, readerHome: URL(fileURLWithPath: NSHomeDirectory())) } else { backend = nil; loadError = "The bundled backend is missing." }
   }
   /// Uses the real backend script at an explicit path (test harness). No data is substituted.
   init(scriptURL: URL) { backend = Backend(scriptURL: scriptURL) }

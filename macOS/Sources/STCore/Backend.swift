@@ -16,12 +16,27 @@ public struct BackendError: Error, LocalizedError, Sendable {
 /// Runs the bundled Python backend. JSON goes in via stdin; pipes drain concurrently; off the main actor.
 public struct Backend: Sendable {
   public var scriptURL: URL
-  public init(scriptURL: URL) { self.scriptURL = scriptURL }
+  public var readerHome: URL?
+  public init(scriptURL: URL, readerHome: URL? = nil) { self.scriptURL = scriptURL; self.readerHome = readerHome }
 
   public func status() async throws -> SystemStatus { try await run("status", input: Optional<Int>.none) }
   public func read(dayStart: Double, dayEnd: Double) async throws -> ReadResult {
     struct Q: Encodable { var dayStart: Double; var dayEnd: Double }
-    return try await run("read", input: Q(dayStart: dayStart, dayEnd: dayEnd))
+    var before: ReadResult = try await run("read", input: Q(dayStart: dayStart, dayEnd: dayEnd))
+    guard let readerHome else { return before }
+    let sessions = try await Task.detached(priority: .userInitiated) {
+      let directory = readerHome.appendingPathComponent("Library/Biome/streams/restricted/ScreenTime.AppUsage/local")
+      let paths = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        .filter { !$0.lastPathComponent.hasPrefix(".") && !["lock", "tombstone"].contains($0.lastPathComponent) }
+      return try GeminiSwiftReader.sessions(paths: paths)
+    }.value
+    let after: ReadResult = try await run("read", input: Q(dayStart: dayStart, dayEnd: dayEnd))
+    guard before.revision == after.revision else {
+      throw BackendError(message: "Sources changed during Swift read; retry.", code: "concurrent_change")
+    }
+    before.sessions = sessions
+    before.warnings.append("Gemini Swift local reader restored; no native aggregate inference or demo data.")
+    return before
   }
   public func apply(_ req: ApplyRequest) async throws -> ApplyResult { try await run("apply", input: req) }
 
