@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
+bash scripts/signing.sh --check >/dev/null
 swift build -c release
 BIN=$(swift build -c release --show-bin-path)
 APP=build/ScreenTimeEditor.app
@@ -20,8 +21,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 EOF
-# Ad-hoc signing by default; set SIGN_IDENTITY to a Developer ID name to sign for distribution.
-codesign --force --options runtime --sign "${SIGN_IDENTITY:--}" "$APP"
-codesign --verify --strict "$APP"
+# Reuse the pinned keychain identity; never silently replace it with ad-hoc signing.
+bash scripts/signing.sh --sign "$APP"
 python3 scripts/verify_deployment.py macos
 echo built "$APP"
