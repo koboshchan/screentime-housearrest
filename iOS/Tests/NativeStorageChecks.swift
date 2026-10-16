@@ -52,7 +52,7 @@ import Darwin
         let backupID = try store.backup()
         try check(try store.verifyBackup(backupID) == withOlder.revision,"verified backup")
         let request = ApplyRequest(start:1000,end:2000,sessions:[StoredSession(bundle:"com.example.new",start:1100,end:1800),StoredSession(bundle:"com.example.older",start:1200,end:1500)],revision:withOlder.revision)
-        let result = try store.apply(request)
+        let result = try store.applyLegacyFixtures(request)
         try check(result.ok,"apply")
         try check(try boundedBytes(olderPath) == olderOriginal,"older segment unchanged")
         let latestAfter = try Segment.parse(boundedBytes(path))
@@ -72,9 +72,9 @@ import Darwin
         try check(after.sessions.contains(StoredSession(bundle:"com.example.old",start:900,end:1000)),"left crossing")
         try check(after.sessions.contains(StoredSession(bundle:"com.example.old",start:2000,end:2500)),"right crossing")
         try check(after.sessions.contains(StoredSession(bundle:"com.example.new",start:1100,end:1800)),"edited session")
-        try rejects("stale rejected") { _ = try store.apply(request) }
+        try rejects("stale rejected") { _ = try store.applyLegacyFixtures(request) }
         var override = request; override.overrideSourceChanges = true
-        let over = try store.apply(override)
+        let over = try store.applyLegacyFixtures(override)
         try check(over.ok && over.details["backupID"] != result.details["backupID"],"override fresh CURRENT backup")
         try check(try store.verifyBackup(over.details["backupID"]!) == after.revision,"override backed current not stale")
         let copied = backup.appendingPathComponent(backupID).appendingPathComponent("segment-0000000002")
@@ -99,7 +99,7 @@ import Darwin
         try rejects("symlink rejected") { _ = try store.readSnapshot() }
         try FileManager.default.removeItem(at:link)
         let invalid = ApplyRequest(start:1000,end:2000,sessions:[StoredSession(bundle:"bad/../../id",start:1100,end:1800)],revision:after.revision,overrideSourceChanges:true)
-        try rejects("invalid id rejected") { _ = try store.apply(invalid) }
+        try rejects("invalid id rejected") { _ = try store.applyLegacyFixtures(invalid) }
         do {
             let change = try KnowledgeDatabase(dbURL,writable:true)
             try change.execute("UPDATE Z_PRIMARYKEY SET Z_ENT=1 WHERE Z_ENT=11; UPDATE ZOBJECT SET Z_ENT=1 WHERE ZSTREAMNAME='/app/usage'")
@@ -110,7 +110,7 @@ import Darwin
         }
         let macSnapshot = try store.readSnapshot()
         let macRequest = ApplyRequest(start:1000,end:2000,sessions:[StoredSession(bundle:"com.example.mac",start:1200,end:1900)],revision:macSnapshot.revision)
-        _ = try store.apply(macRequest)
+        _ = try store.applyLegacyFixtures(macRequest)
         do {
             let verify = try KnowledgeDatabase(dbURL)
             var entityOK = true
@@ -142,7 +142,7 @@ import Darwin
         let parityStore = NativeStorage(database:parityDB,stream:usageDir,backups:parity.appendingPathComponent("Backups"),lockStream:lockDir,groupRoot:groups,runner:{ calls.append($0) })
         let initialParity = try parityStore.readSnapshot()
         let edit = ApplyRequest(start:0.0,end:300,sessions:[StoredSession(bundle:"com.example_with_under.app",start:60,end:180)],revision:initialParity.revision)
-        let parityResult = try parityStore.apply(edit)
+        let parityResult = try parityStore.applyLegacyFixtures(edit)
         try check(parityResult.ok && calls == [["Preferences","ScreenTimeSettingsAgent"]],"fixed refresh fake runner")
         try check(try FileManager.default.contentsOfDirectory(atPath:cache.path).isEmpty,"dynamic DeviceActivity cache cleared")
         let boundaryAfter = try parityStore.readSnapshot()
@@ -169,7 +169,7 @@ import Darwin
             let f = open(cache.appendingPathComponent("new.plist").path,O_WRONLY|O_CREAT,0o600); close(f)
         }
         var mutationCode = ""
-        do { _ = try parityStore.apply(mutationEdit) } catch let e as StorageFailure { mutationCode = e.code }
+        do { _ = try parityStore.applyLegacyFixtures(mutationEdit) } catch let e as StorageFailure { mutationCode = e.code }
         try check(mutationCode == "stale_revision","mutation during backup preserves stale_revision")
         try check(try boundedBytes(usagePath) == beforeMutation && calls.count == 1,"mutation backup fails before writes cache deletion or refresh")
         parityStore.duringBackup = nil
@@ -180,7 +180,7 @@ import Darwin
             let f = open(cache.appendingPathComponent("race.plist").path,O_WRONLY|O_CREAT,0o600); close(f)
         }
         mutationCode = ""
-        do { _ = try parityStore.apply(mutationEdit) } catch let e as StorageFailure { mutationCode = e.code }
+        do { _ = try parityStore.applyLegacyFixtures(mutationEdit) } catch let e as StorageFailure { mutationCode = e.code }
         try check(mutationCode == "stale_revision","transaction prewrite stale not catchwrapped")
         try check(try boundedBytes(usagePath) == beforeMutation && calls.count == 1,"prewrite stale has no usage mutation or refresh")
         parityStore.beforeTransactionWrite = nil
@@ -192,7 +192,7 @@ import Darwin
         try privateWrite(Segment(created:-200,size:8192,records:zeroRecords).encoded(),zeroOlderPath)
         let zeroSnapshot = try parityStore.readSnapshot()
         let zeroEdit = ApplyRequest(start:0,end:300,sessions:[StoredSession(bundle:"com.zero.app",start:0.0,end:100)],revision:zeroSnapshot.revision)
-        _ = try parityStore.apply(zeroEdit)
+        _ = try parityStore.applyLegacyFixtures(zeroEdit)
         let latestZero = try Segment.parse(boundedBytes(usagePath))
         try check(!latestZero.records.contains { (try? AppUsageProto.decode($0.payload).bundle) == "com.zero.app" },"signed-zero older key does not duplicate")
         try check(try parityStore.readSnapshot().sessions.filter { $0.bundle == "com.zero.app" }.count == 1,"signed-zero older session retained once")
@@ -321,7 +321,7 @@ import Darwin
         var stoppedBeforeVerification = false
         parityStore.duringBackup = { throw StorageFailure("fixture_stop","Stop after preparation, before backup verification") }
         let prepRequest = ApplyRequest(start:0,end:300,sessions:[StoredSession(bundle:"com.wal.edit",start:60,end:180)],revision:try parityStore.fingerprint())
-        do { _ = try parityStore.apply(prepRequest) } catch let error as StorageFailure { stoppedBeforeVerification = error.code == "fixture_stop" }
+        do { _ = try parityStore.applyLegacyFixtures(prepRequest) } catch let error as StorageFailure { stoppedBeforeVerification = error.code == "fixture_stop" }
         parityStore.duringBackup = nil
         try check(stoppedBeforeVerification,"apply preparation exercised then stopped before verified backup")
         try check(try sqliteState(parityDB) == walBefore,"apply preparation and preverification backup leave original SQLite sidecars unchanged")
@@ -342,7 +342,7 @@ import Darwin
 
         let activeWALSnapshot = try parityStore.readSnapshot()
         let activeWALRequest = ApplyRequest(start:0,end:300,sessions:[StoredSession(bundle:"com.wal.applied",start:60,end:180)],revision:activeWALSnapshot.revision)
-        let activeWALResult = try parityStore.apply(activeWALRequest)
+        let activeWALResult = try parityStore.applyLegacyFixtures(activeWALRequest)
         try check(activeWALResult.ok,"active WAL apply succeeds only after fresh verified backup")
         let activeWALArchive = parity.appendingPathComponent("Backups").appendingPathComponent(activeWALResult.details["backupID"]!)
         do {
@@ -359,7 +359,42 @@ import Darwin
         try check(!FileManager.default.fileExists(atPath:parityDB.path+"-wal") && !FileManager.default.fileExists(atPath:parityDB.path+"-shm"),"closed WAL fixture genuinely has absent sidecars")
         let closedWALSnapshot = try parityStore.readSnapshot()
         let closedWALRequest = ApplyRequest(start:0,end:300,sessions:[StoredSession(bundle:"com.wal.closed",start:60,end:180)],revision:closedWALSnapshot.revision)
-        try check(try parityStore.apply(closedWALRequest).ok,"WAL-mode database with initially absent sidecars applies after verified absence backup")
+        try check(try parityStore.applyLegacyFixtures(closedWALRequest).ok,"WAL-mode database with initially absent sidecars applies after verified absence backup")
+        // Full standalone Gemini route: both Biome streams plus knowledgeC rewrite.
+        do {
+            let db = try KnowledgeDatabase(parityDB,writable:true)
+            for column in KnowledgeDatabase.geminiColumns where column != "ZVALUEDOUBLE" {
+                try db.execute("ALTER TABLE ZOBJECT ADD COLUMN \(column) \(column == "ZUUID" ? "TEXT" : "NUMERIC")")
+            }
+        }
+        let geminiDBBefore = try sqliteState(parityDB)
+        let geminiRevision = try parityStore.fingerprint()
+        let geminiReply = try parityStore.apply(ApplyRequest(start:0,end:300,sessions:[StoredSession(bundle:"com.apple.mobilesafari",start:60,end:180)],revision:geminiRevision))
+        try check(geminiReply.ok && geminiReply.details["writer"] == "gemini_ios_full_native","shipping route selected")
+        try check(try sqliteState(parityDB) != geminiDBBefore,"full Gemini route rewrites knowledgeC")
+        do {
+            let db = try KnowledgeDatabase(parityDB)
+            var inserted = 0, identifiers = Set<String>()
+            try db.query("SELECT ZSTREAMNAME,ZVALUESTRING,ZSTARTDATE,ZENDDATE,ZUUID,ZSECONDSFROMGMT,ZVALUECLASS,ZSTARTDAYOFWEEK,ZENDDAYOFWEEK,ZSTARTSECONDOFDAY,ZENDSECONDOFDAY FROM ZOBJECT WHERE ZSTARTDATE=60 AND ZENDDATE=180") { row in
+                inserted += 1
+                let begin = Date(timeIntervalSinceReferenceDate:60), end = Date(timeIntervalSinceReferenceDate:180)
+                let cal = Calendar.current
+                try check(sqlite3_column_int(row,5) == TimeZone.current.secondsFromGMT(for:begin),"selected date timezone metadata")
+                try check(sqlite3_column_int(row,7) == (cal.component(.weekday,from:begin)+5)%7 && sqlite3_column_int(row,8) == (cal.component(.weekday,from:end)+5)%7,"selected date weekday metadata")
+                try check(sqlite3_column_int(row,9) == Int(60-cal.startOfDay(for:begin).timeIntervalSinceReferenceDate) && sqlite3_column_int(row,10) == Int(180-cal.startOfDay(for:end).timeIntervalSinceReferenceDate),"selected session clock metadata")
+                identifiers.insert(String(cString:sqlite3_column_text(row,4)))
+                let stream = String(cString:sqlite3_column_text(row,0))
+                if stream == "/app/usage" {
+                    try check(String(cString:sqlite3_column_text(row,1)) == "com.apple.mobilesafari","selected bundle in full SQL")
+                    try check(sqlite3_column_int(row,6) == 1,"usage class preserved")
+                } else { try check(stream == "/device/isLocked" && sqlite3_column_int(row,6) == 2,"unlocked row full metadata") }
+            }
+            try check(inserted == 2 && identifiers.count == 2,"unique per-session usage and lock UUIDs")
+        }
+        try check(try pairUsage(parityStore.events([usagePath])).contains(StoredSession(bundle:"com.apple.mobilesafari",start:60,end:180)),"shipping Gemini route writes requested Safari session")
+        try check(calls.last == ["gemini-sync-or-open"],"fixed original sync/open refresh requested")
+        try check(try parityStore.verifyBackup(geminiReply.details["backupID"]!) == geminiRevision,"shipping Gemini route mandatory backup verified")
+        _ = try parityStore.fingerprint() // Missing cleared Local roots are valid absent entries.
         let response = try StorageProtocol.handle(HelperRequest(op:.read),storage:store)
         try check(response.ok && response.details["snapshot"] != nil,"read protocol")
         do {

@@ -27,6 +27,8 @@ python3 Tests/check_scaffold.py
 # Fixture constructor exists ONLY in this standalone host test executable.
 xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -O -D HOST_STORAGE_TEST -parse-as-library Core/*.swift Tests/NativeStorageChecks.swift -framework CryptoKit -lsqlite3 -lz -o "$OUT/native-storage-checks"
 "$OUT/native-storage-checks"
+xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -O -D HOST_STORAGE_TEST -parse-as-library Core/*.swift Tests/GeminiRouteChecks.swift -framework CryptoKit -lsqlite3 -lz -o "$OUT/gemini-route-checks"
+"$OUT/gemini-route-checks"
 # Positive and corruption checks on already signed artifacts, if available.
 # This does not rebuild, alter, install or run any package.
 if [[ -f .theos/_/Applications/ScreenTimeEditor.app/ScreenTimeEditor ]]; then

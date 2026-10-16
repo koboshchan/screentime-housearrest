@@ -88,7 +88,7 @@ public enum Capability: Equatable {
         guard let r else { return .unknown("Helper did not answer.") }
         guard r.ok, r.code == "ready", r.details["root"] == "1",
               r.details["schema"] == "supported", r.details["protocol"] == "native-v1",
-              r.details["authenticated"] == "1", r.details["writer"] == "original_local_native" else {
+              r.details["authenticated"] == "1", r.details["writer"] == "gemini_ios_full_native" else {
             return .readOnly(r.message)
         }
         return .ready

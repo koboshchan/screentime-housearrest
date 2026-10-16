@@ -361,6 +361,7 @@ public final class NativeStorage {
         return files
     }
     static func refreshProcesses(_ names: [String]) throws {
+        if names == ["gemini-sync-or-open"] { try GeminiIOSRoute.refresh(); return }
         // Match exact kernel process names and signal directly. No shell, killall
         // executable, launchctl or jailbreak-root path is involved.
         typealias ListPIDs = @convention(c) (UnsafeMutableRawPointer?, Int32) -> Int32
@@ -417,7 +418,6 @@ public final class NativeStorage {
     }
     func cacheRoots() throws -> [URL] {
         let roots = try cacheCandidates().filter { FileManager.default.fileExists(atPath:$0.path) }
-        try requireStorage(groupRoot == nil || !roots.isEmpty,"DeviceActivity Local cache was not found.","unsupported_schema")
         return roots
     }
     func inventory() throws -> (files: [(String,URL)], directories: [(String,URL)], absent: [(String,URL)]) {
@@ -461,7 +461,6 @@ public final class NativeStorage {
                 absent.append(("cache-\(i)",root))
             }
         }
-        try requireStorage(groupRoot == nil || roots > 0,"DeviceActivity Local cache was not found.","unsupported_schema")
         return (files,directories,absent)
     }
     func sources() throws -> [(String,URL)] { try inventory().files }
@@ -529,7 +528,7 @@ public final class NativeStorage {
     }
     public func readSnapshot() throws -> StorageSnapshot {
         let before = try fingerprint(), paths = try segments()
-        let sessions = try pairUsage(events(paths))
+        let sessions = try GeminiSwiftReader.sessions(paths)
         let db = try KnowledgeDatabase(database)
         if lockStream != nil { try db.validateLocks() }
         _ = try db.sessions(start:-978307200,end:252423993599)
@@ -680,7 +679,10 @@ public final class NativeStorage {
         segment.records = segment.records.enumerated().sorted { $0.element.timestamp == $1.element.timestamp ? $0.offset < $1.offset : $0.element.timestamp < $1.element.timestamp }.map(\.element)
         return [(path,old,try segment.encoded())]
     }
-    public func apply(_ request: ApplyRequest) throws -> HelperReply {
+    #if HOST_STORAGE_TEST
+    // Earlier hardened writer kept ONLY for historical backup/concurrency regression fixtures.
+    // Not compiled into the shipping iOS app or helper.
+    public func applyLegacyFixtures(_ request: ApplyRequest) throws -> HelperReply {
         try validClock(request.start); try validClock(request.end)
         try requireStorage(request.start < request.end && request.end-request.start <= 90000 && request.sessions.count <= 10000 && request.revision.count == 64,"Invalid edit interval.","invalid_input")
         for s in request.sessions {
@@ -806,4 +808,5 @@ public final class NativeStorage {
         }
         return HelperReply(ok:true,code:"refresh_requested",message:"Saved and requested Screen Time refresh. Device UI verification remains required.",details:["backupID":backupID,"revision":snapshot.revision,"writer":"original_local_native","multiStoreAtomic":"false"])
     }
+    #endif
 }

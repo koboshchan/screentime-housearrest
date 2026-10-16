@@ -14,7 +14,10 @@ public enum StorageProtocol {
         switch request.op {
         case .probe:
             _ = try storage.readSnapshot()
-            return HelperReply(ok:true,code:"ready",message:"Protected storage is readable and the native writer is available.",details:["root":"1","schema":"supported","protocol":"native-v1","authenticated":"1","writer":"original_local_native"])
+            let db = try KnowledgeDatabase(storage.database)
+            try db.validateGeminiSchema()
+            try requireStorage(try !storage.lockSegments().isEmpty,"Device.ScreenLocked unavailable.","unsupported_schema")
+            return HelperReply(ok:true,code:"ready",message:"Protected storage is readable and the native writer is available.",details:["root":"1","schema":"supported","protocol":"native-v1","authenticated":"1","writer":"gemini_ios_full_native"])
         case .read:
             let snapshot = try storage.readSnapshot()
             let encoded = try JSONEncoder().encode(snapshot)
