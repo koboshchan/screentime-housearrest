@@ -23,6 +23,9 @@ final class EditorModel {
   }
   var applying = false
   var applyMessage: String?
+  var showingApplyPermissionHelp = false
+  var applyNeedsSystemPrivileges = false
+  var applyPermissionDetails: String?
   var confirmingSourceChanged = false
   var confirmingApply = false
   var confirmingDiscard = false
@@ -188,6 +191,14 @@ final class EditorModel {
       if (error as? BackendError)?.code == "stale_revision" {
         confirmingSourceChanged = true
         applyMessage = nil
+      } else if (error as? BackendError)?.code == "system_store_permission_denied" ||
+                  (error as? BackendError)?.isPermissionDenied == true {
+        applyNeedsSystemPrivileges = (error as? BackendError)?.code == "system_store_permission_denied"
+        applyPermissionDetails = error.localizedDescription
+        showingApplyPermissionHelp = true
+        applyMessage = applyNeedsSystemPrivileges
+          ? "System storage requires elevated access. Your edits are kept."
+          : "Screen Time access was denied. Check Full Disk Access. Your edits are kept."
       } else {
         applyMessage = "Not applied: \(error.localizedDescription)"
       }

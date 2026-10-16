@@ -5,9 +5,9 @@ public struct BackendError: Error, LocalizedError, Sendable {
   public var message: String
   public var code: String? = nil
   public var errorDescription: String? { message }
-  /// macOS blocked reading the Screen Time stores: needs Full Disk Access.
+  /// Permission denial may be privacy authorization or ordinary filesystem access.
   public var isPermissionDenied: Bool {
-    if let code { return code == "permission_denied" }
+    if code == "permission_denied" { return true }
     let m = message.lowercased()
     return m.contains("operation not permitted") || m.contains("permission denied") || m.contains("not authorized")
   }

@@ -50,7 +50,9 @@ struct TimelineEditor: View {
             }
           }
         }.frame(width: labelW + w, height: axisH + CGFloat(lanes.count) * laneH, alignment: .topLeading)
-      }
+          .frame(minHeight: geo.size.height, alignment: .topLeading)
+      }.defaultScrollAnchor(.topLeading)
+
       }
       }
     }

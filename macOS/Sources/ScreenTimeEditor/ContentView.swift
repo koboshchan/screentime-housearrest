@@ -37,6 +37,9 @@ struct ContentView: View {
     } message: {
       Text("Reload to replace your edits with the current data, or override with your edits. Override makes a fresh verified backup of the current data before applying.")
     }
+    .sheet(isPresented: $m.showingApplyPermissionHelp) {
+      ApplyPermissionHelp()
+    }
     .confirmationDialog("Apply changes to Screen Time?", isPresented: $m.confirmingApply) {
       Button("Back Up and Apply") { Task { await model.apply() } }
       Button("Cancel", role: .cancel) {}
@@ -151,5 +154,36 @@ struct DetailPane: View {
         Divider()
         Footer()
       }
+  }
+}
+
+/// Apply permission failures keep the draft intact and never retry automatically.
+struct ApplyPermissionHelp: View {
+  @Environment(EditorModel.self) private var model
+  @Environment(\.dismiss) private var dismiss
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      Text(model.applyNeedsSystemPrivileges ? "System storage needs elevated access" : "Allow Full Disk Access")
+        .font(.title2.weight(.semibold))
+      Text(model.applyNeedsSystemPrivileges
+        ? "The SIP-off reset needs a system-owned Biome folder. SIP disabled and Full Disk Access do not override its filesystem permissions. This app has no installed privileged helper, so it cannot perform this reset as your user."
+        : "Allow Screen Time Editor in System Settings, Privacy & Security, Full Disk Access. Then quit and reopen this app. Your edits have not been discarded.")
+        .fixedSize(horizontal: false, vertical: true)
+      Text("Grant access to Screen Time Editor, not to Python globally. The bundled backend runs as a child of this app.")
+        .font(.callout).foregroundStyle(.secondary)
+      if let details = model.applyPermissionDetails {
+        DisclosureGroup("Technical details") {
+          Text(details).font(.caption.monospaced()).textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      }
+      HStack {
+        Button("Open Full Disk Access Settings") {
+          if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") { NSWorkspace.shared.open(url) }
+        }
+        Spacer()
+        Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+      }
+    }.padding(24).frame(width: 520)
   }
 }

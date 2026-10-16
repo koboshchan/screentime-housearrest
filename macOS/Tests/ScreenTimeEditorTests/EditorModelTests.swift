@@ -251,4 +251,26 @@ final class EditorModelTests: XCTestCase {
     XCTAssertFalse(m.canApply)
   }
 
+  func testApplyPermissionsShowHelpAndKeepDraft() async throws {
+    for code in ["permission_denied", "system_store_permission_denied"] {
+      let url = try script()
+      var source = try String(contentsOf: url, encoding: .utf8)
+      source = source.replacingOccurrences(of: "Fresh backup failed", with: "Access denied")
+      source = source.replacingOccurrences(of: "backup_failed", with: code)
+      try source.write(to: url, atomically: true, encoding: .utf8)
+      try Data().write(to: dir.appendingPathComponent("backup-fail"))
+      let m = EditorModel(scriptURL: url)
+      await m.bootstrap()
+      var s = m.sessions[0]; s.end += 600; m.commitEdit(s)
+      let draft = m.sessions
+      await m.apply()
+      XCTAssertTrue(m.showingApplyPermissionHelp)
+      XCTAssertEqual(m.applyNeedsSystemPrivileges, code == "system_store_permission_denied")
+      XCTAssertEqual(m.sessions, draft)
+      XCTAssertTrue(m.dirty)
+      XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("apply.log").path))
+      try FileManager.default.removeItem(at: dir.appendingPathComponent("backup-fail"))
+    }
+  }
+
 }

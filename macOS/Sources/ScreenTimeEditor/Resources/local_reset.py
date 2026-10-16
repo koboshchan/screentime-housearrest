@@ -81,7 +81,23 @@ def inventory(backlight, cache, api):
 
 def prepare(engine, start, end, sessions, api, paths=None):
     backlight, cache = paths if paths is not None else discover(engine, api)
-    state, files = inventory(backlight, cache, api)
+    try:
+        state, files = inventory(backlight, cache, api)
+    except PermissionError as exc:
+        system_store = (exc.filename is not None and
+                        (Path(exc.filename) == backlight or Path(exc.filename) in backlight.parents))
+        if system_store:
+            raise api.StorageError(
+                "System Biome storage is not accessible to this account. "
+                "SIP being disabled does not grant filesystem privileges. "
+                "Full Disk Access may already be enabled; an authorized privileged "
+                "helper is required when the system folder is owned by _biome. "
+                "No Screen Time stores were changed.",
+                "system_store_permission_denied") from exc
+        raise api.StorageError(
+            "Screen Time reset storage access was denied. Check Full Disk Access "
+            "for Screen Time Editor, then quit and reopen the app. "
+            "No Screen Time stores were changed.", "permission_denied") from exc
     conn = engine.open_database()
     try:
         api.require('ZVALUEINTEGER' in {r[1] for r in conn.execute('PRAGMA table_info(ZOBJECT)')},

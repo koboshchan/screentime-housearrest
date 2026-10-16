@@ -58,6 +58,11 @@ import STCore
       let prefix = fixture ? "macos-fixture" : "macos-real"
       render(DetailPane(), s, w: 1000, h: 600, to: args[2] + "/\(prefix)-\(n).png", model: model)
       if fixture {
+        model.applyNeedsSystemPrivileges = true
+        model.applyPermissionDetails = "System Biome storage is not accessible. No Screen Time stores were changed."
+        render(ApplyPermissionHelp(), s, w: 580, h: 320, to: args[2] + "/macos-fixture-system-permission-\(n).png", model: model)
+        model.applyNeedsSystemPrivileges = false
+        render(ApplyPermissionHelp(), s, w: 580, h: 320, to: args[2] + "/macos-fixture-fda-permission-\(n).png", model: model)
         render(ContentView(), s, w: 1300, h: 760, to: args[2] + "/macos-fixture-full-\(n).png", model: model)
         model.showShortSessions = true
         render(ContentView(), s, w: 1300, h: 760, to: args[2] + "/macos-fixture-short-shown-\(n).png", model: model)
