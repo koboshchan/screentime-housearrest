@@ -2,7 +2,7 @@ Local backend and restored writer
 
 Run python3 -m unittest discover -s macOS/BackendTests -v from the repository.
 All tests use temporary synthetic stores. No tests access live Screen Time data.
-The current suite has 73 passing tests on Mac Python and no added dependencies.
+The current suite has 77 passing tests on Mac Python and no added dependencies.
 
 backend.py loads its sibling original_local.py. Both files must be bundled as
 resources. The module is adapted from scripts/inject_local_mac.py in the verified
@@ -52,3 +52,17 @@ SSH live knowledgeC/WAL reads were denied by macOS privacy permissions. Parent
 must verify live read in the authorized native GUI after bundling both modules.
 
 A next-day boundary regression verifies that a session beginning exactly at the edited day end survives the latest-segment rewrite unchanged.
+
+Boundary and all-segment UI handling
+
+Day replacement is half-open [dayStart, dayEnd). Untouched previous-day ends
+and next-day starts at the exact boundaries remain paired. Unchanged sessions
+from older segments are matched by bundle and clipped day interval with counted
+multiplicity, so a merged all-segment UI list does not duplicate them into the
+latest segment. SQLite still receives the full requested day list. Because the
+original writer only changes the latest segment, editing/deleting a session whose
+source is an older segment cannot remove its original Biome history; changed
+versions may coexist there. This is a concrete original scope limitation, not a
+blanket disabled writer. Tests cover both boundaries, unchanged older sessions
+and clipped older crossing sessions. Swift ApplyResult accepts backupPath and
+logoutRequired, matching the backend success response.

@@ -79,6 +79,39 @@ class OriginalTests(unittest.TestCase):
         self.engine.apply(request)
         self.assertIn(('com.next.App',86400,86500),
                       [(s['bundle'],s['start'],s['end']) for s in self.engine.read()['sessions']])
+    def test_previous_day_end_boundary_preserved(self):
+        (self.engine.stream/'b').write_bytes(test_backend.segment([
+            (True,-100,'previous'),(False,0,'previous'),
+            (True,100,'com.test.App'),(False,200,'com.test.App')]))
+        self.engine.apply(self.request())
+        self.assertIn(('previous',-100,0),
+                      [(s['bundle'],s['start'],s['end']) for s in self.engine.read()['sessions']])
+    def test_older_segment_sessions_not_duplicated(self):
+        (self.engine.stream/'a').write_bytes(test_backend.segment([
+            (True,10,'older'),(False,20,'older')]))
+        request=self.request()
+        request['sessions'].append(dict(id='old',bundle='older',start=10,end=20))
+        self.engine.apply(request)
+        values=[(s['bundle'],s['start'],s['end']) for s in self.engine.read()['sessions']]
+        self.assertEqual(values.count(('older',10,20)),1)
+        self.assertIn(('com.new.App',300,400),values)
+    def test_clipped_older_crossing_session_not_duplicated(self):
+        (self.engine.stream/'a').write_bytes(test_backend.segment([
+            (True,-100,'older'),(False,20,'older')]))
+        request=self.request()
+        request['sessions'].append(dict(id='old',bundle='older',start=0,end=20))
+        self.engine.apply(request)
+        values=[(s['bundle'],s['start'],s['end']) for s in self.engine.read()['sessions']]
+        self.assertIn(('older',-100,20),values)
+        self.assertNotIn(('older',0,20),values)
+    def test_unchanged_older_segment_not_duplicated(self):
+        (self.engine.stream/'a').write_bytes(test_backend.segment([
+            (True,10,'older'),(False,20,'older')]))
+        request=self.request()
+        request['sessions'].append(dict(id='old',bundle='older',start=10,end=20))
+        self.engine.apply(request)
+        sessions=[s for s in self.engine.read()['sessions'] if s['bundle']=='older']
+        self.assertEqual(len(sessions),1)
     def test_module_import_no_side_effect(self):
         source=Path(b.original_local.__file__).read_text()
         self.assertNotIn('killall',source);self.assertNotIn('launchctl',source)

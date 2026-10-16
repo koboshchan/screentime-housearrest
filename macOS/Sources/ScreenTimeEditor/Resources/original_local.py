@@ -3,6 +3,7 @@ scripts/inject_local_mac.py. No execution at import, remote access, credentials,
 hardcoded home fallback or daemon termination. Original latest-segment and
 Z_ENT=1 insertion behavior retained; native aggregation may require logout.
 """
+from collections import Counter
 import os
 import sqlite3
 import struct
@@ -67,14 +68,39 @@ def prepare(engine, start, end, sessions, api):
     for session in existing:
         if session['end'] > start and session['start'] < end:
             outside.extend(api.preserve_outside([session], start, end))
-    kept = [record for record in records if record[1] < start or record[1] >= end]
+    protected = set()
+    for session in existing:
+        if session['end'] <= start or session['start'] >= end:
+            protected.update(((session['bundle'], session['start']), (session['bundle'], session['end'])))
+    kept = [record for record in records if record[1] < start or record[1] >= end or
+            (record[0] == 1 and (api.decode_usage(record[3])[2], record[1]) in protected)]
     # Remove both endpoints of crossing sessions before rebuilding outside pieces.
     remove = set()
     for session in existing:
         if session['end'] > start and session['start'] < end:
             remove.update(((session['bundle'],session['start']), (session['bundle'],session['end'])))
     kept = [r for r in kept if r[0] != 1 or (api.decode_usage(r[3])[2], r[1]) not in remove]
-    for session in list(sessions) + outside:
+    # UI reads all segments. Do not copy unchanged older-segment sessions into
+    # the latest segment a second time. Match clipped day intervals, counting
+    # multiplicity rather than silently collapsing distinct identical sessions.
+    older_events = []
+    for older in engine.source_paths()[:-1]:
+        _, older_records = api.parse_segment(api.checked_bytes(older))
+        for index, (state, timestamp, flag, payload) in enumerate(older_records):
+            if state == 1:
+                opening, when, bundle = api.decode_usage(payload)
+                older_events.append((opening, when, bundle, older.name + ':' + str(index)))
+    older_sessions, _ = api.paired_sessions(older_events)
+    untouched = Counter((s['bundle'], max(start,s['start']), min(end,s['end']))
+                        for s in older_sessions if s['end'] > start and s['start'] < end)
+    latest_sessions = []
+    for session in sessions:
+        key = (session['bundle'], session['start'], session['end'])
+        if untouched[key]:
+            untouched[key] -= 1
+        else:
+            latest_sessions.append(session)
+    for session in latest_sessions + outside:
         for opening, when in ((True,session['start']), (False,session['end'])):
             kept.append((1,when,0,usage_payload(opening,when,session['bundle'],api)))
     kept.sort(key=lambda r: r[1])
