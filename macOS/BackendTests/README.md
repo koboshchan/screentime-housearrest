@@ -40,3 +40,25 @@ coordination before enabling writes. These are deliberately not guessed.
 Native verification on the Mac reported macOS 27.2 build 26B5091g, SIP enabled.
 Native read honestly failed Operation not permitted at the AppUsage directory.
 All 27 fixture tests passed on both Linux and macOS. No real apply was executed.
+
+Bounded reader update (2026-10-16)
+
+Database/WAL revision hashing now streams 1 MiB chunks without the segment size
+cap. Each scan reads only the initial file length and rejects growth, truncation,
+metadata changes, inode replacement, symlinks and nonregular files. Segment
+parsing still has its 64 MiB in-memory format limit. SQLite usage validation
+iterates a constant-sized SELECT 1 cursor instead of allocating unused rows.
+Backup copy/digest verification also streams; the SQLite backup API remains the
+only database copy mechanism, with integrity, INVALID/COMPLETE and sealing checks
+preserved. Production apply stays blocked and never calls backup.
+
+The full current suite has 63 passing tests on Mac Python, including sparse files
+and database/WAL files above 64 MiB, a real large WAL read, a valid large database
+backup, corrupted large backup rejection, concurrent changes, descriptor/path
+replacement and symlink/FIFO rejection. The sparse hash memory test requires peak
+Python allocations below 4 MiB. No external dependencies were added.
+
+A read-only hash attempt through SSH could not access current knowledgeC.db or
+its WAL (Operation not permitted). GUI real-data verification must therefore be
+performed separately in the authorized native app after rebundling this backend.
+No live backup, write, apply, install, permission change or deployment was done.

@@ -22,6 +22,7 @@ import zlib
 
 COCOA_OFFSET = 978307200
 MAX_SEGMENT = 64 * 1024 * 1024
+STREAM_CHUNK = 1024 * 1024
 MAX_INPUT = 4 * 1024 * 1024
 APPLY_BLOCK_REASON = "No certified writer or coordinated multi-store rollback is available."
 
@@ -185,24 +186,61 @@ def no_symlink_parents(path):
         require(not stat.S_ISLNK(info.st_mode), "Symlink path component refused.", "unsafe_path")
     return path
 
-def checked_bytes(path):
+def scan_file(path, consume, limit=None):
+    """Read a stable regular file with fixed memory and a fixed initial EOF.
+
+    limit is only for in-memory formats. Large SQLite files have no size cap;
+    growth never extends this scan indefinitely. Path identity is checked again
+    after reading, not only on the opened descriptor.
+    """
     path = no_symlink_parents(path)
     before = path.lstat()
-    require(stat.S_ISREG(before.st_mode) and not path.is_symlink(), "Source is not a regular non-symlink file.")
-    require(before.st_size <= MAX_SEGMENT, "Source exceeds supported size.")
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    require(stat.S_ISREG(before.st_mode), "Source is not a regular non-symlink file.", "unsafe_path")
+    require(limit is None or before.st_size <= limit, "Source exceeds supported size.")
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    def signature(info):
+        return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
     try:
         opened = os.fstat(fd)
-        require((opened.st_dev, opened.st_ino) == (before.st_dev, before.st_ino), "Source replaced during read.", "concurrent_change")
-        with os.fdopen(fd, "rb", closefd=False) as handle:
-            data = handle.read(MAX_SEGMENT + 1)
+        require(stat.S_ISREG(opened.st_mode) and signature(opened) == signature(before),
+                "Source replaced during read.", "concurrent_change")
+        remaining = before.st_size
+        while remaining:
+            chunk = os.read(fd, min(STREAM_CHUNK, remaining))
+            require(chunk, "Source truncated during read.", "concurrent_change")
+            consume(chunk)
+            remaining -= len(chunk)
+        require(not os.read(fd, 1), "Source grew during read.", "concurrent_change")
         after = os.fstat(fd)
-        require((before.st_size, before.st_mtime_ns, before.st_ctime_ns) ==
-                (after.st_size, after.st_mtime_ns, after.st_ctime_ns) and len(data) == before.st_size,
+        current = no_symlink_parents(path).lstat()
+        require(signature(before) == signature(after) == signature(current),
                 "Source changed during read.", "concurrent_change")
-        return data
+        return before.st_size
     finally:
         os.close(fd)
+
+def checked_bytes(path):
+    chunks = []
+    scan_file(path, chunks.append, MAX_SEGMENT)
+    return b"".join(chunks)
+
+def file_digest(path, limit=None):
+    digest = hashlib.sha256()
+    size = scan_file(path, digest.update, limit)
+    return size, digest.hexdigest()
+
+def copy_private(source, destination, limit=None):
+    fd = os.open(str(destination), os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                 getattr(os, "O_NOFOLLOW", 0), 0o600)
+    digest = hashlib.sha256()
+    with os.fdopen(fd, "wb") as handle:
+        def consume(chunk):
+            handle.write(chunk)
+            digest.update(chunk)
+        size = scan_file(source, consume, limit)
+        handle.flush()
+        os.fsync(handle.fileno())
+    return size, digest.hexdigest()
 
 class Engine:
     # home injection is a Python testing API only. CLI always supplies Path.home().
@@ -253,7 +291,7 @@ class Engine:
         digest = hashlib.sha256()
         paths = self.source_paths()
         for path in paths:
-            digest.update(path.name.encode() + b"\0" + hashlib.sha256(checked_bytes(path)).digest())
+            digest.update(path.name.encode() + b"\0" + bytes.fromhex(file_digest(path, MAX_SEGMENT)[1]))
         for suffix in ("", "-wal", "-shm"):
             path = Path(str(self.database) + suffix)
             digest.update(suffix.encode() + b"\0")
@@ -261,7 +299,7 @@ class Engine:
                 # shm is SQLite coordination, not logical data; hashing it creates
                 # false stale reads on every read-only connection. Track existence only.
                 if suffix != "-shm":
-                    digest.update(hashlib.sha256(checked_bytes(path)).digest())
+                    digest.update(bytes.fromhex(file_digest(path)[1]))
             else:
                 digest.update(b"absent")
         return digest.hexdigest()
@@ -283,8 +321,9 @@ class Engine:
                 require({"ZSTREAMNAME", "ZSTARTDATE", "ZENDDATE", "ZVALUESTRING"} <= columns,
                         "Unsupported knowledgeC schema.")
                 # Force access to real usage rows, not only the schema.
-                conn.execute("SELECT ZSTARTDATE,ZENDDATE,ZVALUESTRING FROM ZOBJECT WHERE ZSTREAMNAME=?",
-                             ("/app/usage",)).fetchall()
+                for _ in conn.execute("SELECT 1 FROM ZOBJECT WHERE ZSTREAMNAME=?",
+                             ("/app/usage",)):
+                    pass
             finally:
                 conn.close()
             sessions, warnings = paired_sessions(events)
@@ -368,10 +407,12 @@ def verify_backup(destination, expected_revision=None):
                 isinstance(record["source"], str) and record["source"].startswith("/") and
                 ".." not in Path(record["source"]).parts and
                 isinstance(record["size"], int) and not isinstance(record["size"], bool) and
-                0 <= record["size"] <= MAX_SEGMENT and isinstance(record["sha256"], str),
+                0 <= record["size"] and (name == "knowledgeC.db" or record["size"] <= MAX_SEGMENT)
+                and isinstance(record["sha256"], str) and len(record["sha256"]) == 64
+                and all(c in "0123456789abcdef" for c in record["sha256"]),
                 "Invalid backup file metadata.", "backup_failed")
-        data = checked_bytes(destination / name)
-        require(len(data) == record["size"] and hashlib.sha256(data).hexdigest() == record["sha256"],
+        size, digest = file_digest(destination / name, None if name == "knowledgeC.db" else MAX_SEGMENT)
+        require(size == record["size"] and digest == record["sha256"],
                 "Backup file digest mismatch.", "backup_failed")
     database = destination / "knowledgeC.db"
     try:
@@ -400,9 +441,8 @@ def verified_backup(engine, destination):
     try:
         for index, source in enumerate(engine.source_paths()):
             name = "segment-" + str(index)
-            data = checked_bytes(source)
-            private_file(destination / name, data)
-            manifest["files"][name] = dict(source=str(source), sha256=hashlib.sha256(data).hexdigest(), size=len(data))
+            size, digest = copy_private(source, destination / name, MAX_SEGMENT)
+            manifest["files"][name] = dict(source=str(source), sha256=digest, size=size)
         database_copy = destination / "knowledgeC.db"
         # Precreate with 0600, before SQLite opens it, independent of umask.
         private_file(database_copy, b"")
@@ -427,14 +467,14 @@ def verified_backup(engine, destination):
                 require(stat.S_ISREG(sidecar.lstat().st_mode) and not sidecar.is_symlink(),
                         "Unsafe snapshot sidecar.", "backup_failed")
                 sidecar.unlink()
-        data = checked_bytes(database_copy)
+        size, digest = file_digest(database_copy)
         fd = os.open(str(database_copy), os.O_RDONLY)
         try:
             os.fsync(fd)
         finally:
             os.close(fd)
         manifest["files"]["knowledgeC.db"] = dict(source=str(engine.database),
-            sha256=hashlib.sha256(data).hexdigest(), size=len(data))
+            sha256=digest, size=size)
         require(engine.fingerprint() == before, "Sources changed during backup.", "concurrent_change")
         raw = json.dumps(manifest, sort_keys=True).encode()
         private_file(destination / "manifest.json", raw)
