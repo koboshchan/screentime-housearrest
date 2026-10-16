@@ -25,7 +25,7 @@ struct TimelineEditor: View {
             }
           }.frame(height: axisH + CGFloat(lanes.count) * laneH).allowsHitTesting(false)
           ForEach(Array(lanes.enumerated()), id: \.element) { i, b in
-            Text(b).font(.callout).lineLimit(1).frame(width: labelW - 8, height: laneH, alignment: .leading)
+            AppIdentityLabel(bundleID: b).font(.callout).frame(width: labelW - 8, height: laneH, alignment: .leading)
               .offset(y: axisH + CGFloat(i) * laneH)
           }
           ForEach(model.sessions) { s in
@@ -57,7 +57,7 @@ struct Block: View {
       .overlay(alignment: .leading) { handle(.leading, secPerPt) }
       .overlay(alignment: .trailing) { handle(.trailing, secPerPt) }
       .contentShape(Rectangle())
-      .help("\(session.bundle)  \(clock(session.start))–\(clock(session.end))")
+      .help("\(AppIdentityResolver.shared.resolve(session.bundle).name)  \(clock(session.start))–\(clock(session.end))")
       .gesture(DragGesture(minimumDistance: 2).onChanged { v in
         if base == nil { model.checkpoint(); base = session; model.selection = session.id }
         guard let b = base else { return }
@@ -71,7 +71,7 @@ struct Block: View {
         let t = DayMath.snap((session.start + session.end) / 2); model.slice(session.id, at: t)
       }
       .onTapGesture { model.selection = session.id }
-      .accessibilityLabel("\(session.bundle), \(clock(session.start)) to \(clock(session.end))")
+      .accessibilityLabel("\(AppIdentityResolver.shared.resolve(session.bundle).name), \(clock(session.start)) to \(clock(session.end))")
       .accessibilityAddTraits(selected ? .isSelected : [])
   }
 

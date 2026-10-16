@@ -12,13 +12,13 @@ struct SessionList: View {
     List(selection: $m.selection) {
       ForEach(model.sessions) { s in
         VStack(alignment: .leading, spacing: 2) {
-          Text(s.bundle).lineLimit(1)
+          AppIdentityLabel(bundleID: s.bundle)
           Text("\(clock(s.start)) – \(clock(s.end))  ·  \(DayMath.format(s.duration))")
             .font(.caption).foregroundStyle(.secondary).monospacedDigit()
         }
         .tag(s.id)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(s.bundle), \(clock(s.start)) to \(clock(s.end))")
+        .accessibilityLabel("\(AppIdentityResolver.shared.resolve(s.bundle).name), \(clock(s.start)) to \(clock(s.end))")
         .contextMenu { Button("Delete", role: .destructive) { model.delete(s.id) } }
       }
     }
@@ -39,7 +39,8 @@ struct Inspector: View {
     let startB = Binding(get: { Date(timeIntervalSinceReferenceDate: session.start) }, set: { session.start = $0.timeIntervalSinceReferenceDate })
     let endB = Binding(get: { Date(timeIntervalSinceReferenceDate: session.end) }, set: { session.end = $0.timeIntervalSinceReferenceDate })
     Form {
-      TextField("App", text: $session.bundle)
+      AppIdentityLabel(bundleID: session.bundle)
+      TextField("Bundle ID", text: $session.bundle)
       DatePicker("Start", selection: startB, displayedComponents: .hourAndMinute)
       DatePicker("End", selection: endB, displayedComponents: .hourAndMinute)
       HStack {

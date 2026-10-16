@@ -20,6 +20,11 @@ import AppKit
     print("status:", model.status.map { "\($0.macOS) canApply=\($0.canApply)" } ?? "nil", "statusError:", model.statusError ?? "-")
     print("loadError:", model.loadError ?? "-", "permissionDenied:", model.permissionDenied, "sessions:", model.sessions.count)
     for (s, n) in [(ColorScheme.light, "light"), (.dark, "dark")] {
+      render(VStack(alignment: .leading, spacing: 14) {
+        AppIdentityLabel(bundleID: "com.apple.finder")
+        AppIdentityLabel(bundleID: "com.apple.Safari")
+        AppIdentityLabel(bundleID: "com.not.installed")
+      }.padding(20), s, w: 300, h: 150, to: args[2] + "/app-identities-\(n).png", model: model)
       render(DetailPane(), s, w: 820, h: 600, to: args[2] + "/macos-real-\(n).png", model: model)
     }
   }
