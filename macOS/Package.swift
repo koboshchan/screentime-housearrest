@@ -7,6 +7,7 @@ let package = Package(
     .target(name: "STCore", path: "Sources/STCore"),
     .executableTarget(name: "ScreenTimeEditor", dependencies: ["STCore"], path: "Sources/ScreenTimeEditor",
       resources: [.copy("Resources/backend.py")]),
+    .testTarget(name: "ScreenTimeEditorTests", dependencies: ["ScreenTimeEditor", "STCore"], path: "Tests/ScreenTimeEditorTests"),
     .testTarget(name: "STCoreTests", dependencies: ["STCore"], path: "Tests/STCoreTests"),
   ]
 )

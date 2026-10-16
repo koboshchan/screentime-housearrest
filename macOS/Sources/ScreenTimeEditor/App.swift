@@ -7,7 +7,10 @@ struct ScreenTimeEditorApp: App {
     WindowGroup("Screen Time Editor") {
       ContentView().environment(model)
         .frame(minWidth: 980, minHeight: 620)
-        .task { await model.bootstrap() }
+        .task {
+          await model.bootstrap()
+          if ReadCheck.requested { _ = try? ReadCheck.write(model) }
+        }
     }
     .commands {
       CommandGroup(replacing: .undoRedo) {
