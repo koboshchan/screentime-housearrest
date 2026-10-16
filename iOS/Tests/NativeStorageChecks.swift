@@ -196,6 +196,170 @@ import Darwin
         let latestZero = try Segment.parse(boundedBytes(usagePath))
         try check(!latestZero.records.contains { (try? AppUsageProto.decode($0.payload).bundle) == "com.zero.app" },"signed-zero older key does not duplicate")
         try check(try parityStore.readSnapshot().sessions.filter { $0.bundle == "com.zero.app" }.count == 1,"signed-zero older session retained once")
+        // Boundary lookup must use ALL segments and stable duplicate ordering.
+        let oldLock = lockDir.appendingPathComponent("000-older-lock")
+        let oldLockBytes = try Segment(created:-300,size:8192,records:[
+            SegmentRecord(timestamp:-50,payload:Data([8,1])),
+            SegmentRecord(timestamp:-50,payload:Data([8,0]))
+        ]).encoded()
+        try privateWrite(oldLockBytes,oldLock)
+        func replaceFixture(_ url: URL,_ data: Data) throws {
+            try FileManager.default.removeItem(at:url)
+            try privateWrite(data,url)
+        }
+        try replaceFixture(lockPath,Segment(created:-200,size:8192,records:[SegmentRecord(timestamp:500,payload:Data([8,1]))]).encoded())
+        let boundaryRequest = ApplyRequest(start:0,end:300,sessions:[StoredSession(bundle:"com.boundary.app",start:60,end:300)],revision:try parityStore.fingerprint())
+        let olderPlan = try parityStore.prepareLocks(boundaryRequest)
+        let planned = try Segment.parse(olderPlan[0].2)
+        try check(planned.records.last(where:{$0.timestamp == 300})?.payload == Data([8,0]),"older segment state restored; stable duplicate last wins")
+        try check(try boundedBytes(oldLock) == oldLockBytes,"boundary preparation never rewrites older segments")
+        try replaceFixture(lockPath,Segment(created:-200,size:8192,records:[SegmentRecord(timestamp:300,payload:Data([8,0]))]).encoded())
+        let exactPlan = try parityStore.prepareLocks(boundaryRequest)
+        try check(try Segment.parse(exactPlan[0].2).records.last(where:{$0.timestamp == 300})?.payload == Data([8,0]),"original end boundary wins synthetic closing event")
+        try FileManager.default.removeItem(at:oldLock)
+        try replaceFixture(lockPath,Segment(created:-200,size:8192,records:[SegmentRecord(timestamp:500,payload:Data([8,1]))]).encoded())
+        try rejects("unknown lock boundary fails before backup or writes") { _ = try parityStore.prepareLocks(boundaryRequest) }
+        try replaceFixture(lockPath,Segment(created:-200,size:8192,records:[SegmentRecord(timestamp:-50,payload:Data([8,0]))]).encoded())
+
+        // Canonical mappings and explicit absence survive root order changes.
+        let emptyCache = cache.appendingPathComponent("empty/nested")
+        try FileManager.default.createDirectory(at:emptyCache,withIntermediateDirectories:true)
+        try privateWrite(Data("restorable".utf8),cacheFile)
+        try check(chmod(cacheFile.path,0o640) == 0 && chmod(emptyCache.path,0o750) == 0,"fixture original nonprivate modes")
+        let absentGroup = groups.appendingPathComponent("000-absent-group")
+        try FileManager.default.createDirectory(at:absentGroup,withIntermediateDirectories:true)
+        let metadataID = try parityStore.backup()
+        let metadataFolder = parity.appendingPathComponent("Backups").appendingPathComponent(metadataID)
+        let metadataManifest = try JSONDecoder().decode(BackupManifest.self,from:boundedBytes(metadataFolder.appendingPathComponent("manifest.json")))
+        let restoredFile = metadataManifest.files.first(where:{$0.originalPath == cacheFile.path})!
+        let restoredDir = metadataManifest.directories.first(where:{$0.originalPath == emptyCache.path})!
+        try check(restoredFile.mode == 0o640 && restoredDir.mode == 0o750,"original file and directory modes separately persisted")
+        try check(metadataManifest.absent.contains(where:{$0.originalPath == absentGroup.appendingPathComponent("Library/com.apple.DeviceActivity/Local").path}),"absent SystemGroup cache path persisted")
+        try check(metadataManifest.absent.contains(where:{$0.name == "knowledgeC.db-wal"}) && metadataManifest.absent.contains(where:{$0.name == "knowledgeC.db-shm"}),"absent SQLite WAL and SHM explicitly recorded")
+        try check(metadataManifest.directories.contains(where:{$0.originalPath == cache.path}) && restoredFile.originalPath.contains(cache.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().lastPathComponent),"canonical SystemGroup UUID mappings persisted")
+        let archivedFile = metadataFolder.appendingPathComponent(restoredFile.name)
+        let archivedEmpty = metadataFolder.appendingPathComponent(restoredDir.name)
+        try check(try parityStore.metadata(archivedFile).2 == 0o600 && parityStore.metadata(archivedEmpty).2 == 0o700,"private backup modes not confused with original modes")
+        try FileManager.default.removeItem(at:archivedEmpty)
+        try rejects("missing empty archived directory rejected") { _ = try parityStore.verifyBackup(metadataID) }
+        try FileManager.default.createDirectory(at:archivedEmpty,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700,.ownerAccountID:geteuid(),.groupOwnerAccountID:getegid()])
+        try check(try parityStore.verifyBackup(metadataID) == metadataManifest.revision,"recreated private empty directory verified")
+        try check(chmod(archivedEmpty.path,0o755) == 0,"alter private directory mode")
+        try rejects("insecure archived directory mode rejected") { _ = try parityStore.verifyBackup(metadataID) }
+        _ = chmod(archivedEmpty.path,0o700)
+        try FileManager.default.removeItem(at:archivedEmpty)
+        try privateWrite(Data(),archivedEmpty)
+        try rejects("directory replaced with regular file rejected") { _ = try parityStore.verifyBackup(metadataID) }
+        try FileManager.default.removeItem(at:archivedEmpty)
+        try FileManager.default.createDirectory(at:archivedEmpty,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700,.ownerAccountID:geteuid(),.groupOwnerAccountID:getegid()])
+        _ = chmod(archivedFile.path,0o644)
+        try rejects("insecure archived file mode rejected") { _ = try parityStore.verifyBackup(metadataID) }
+        _ = chmod(archivedFile.path,0o600)
+        let groupCount = getgroups(0,nil)
+        var groupsForTest = [gid_t](repeating:0,count:Int(groupCount))
+        let gotGroups = groupsForTest.withUnsafeMutableBufferPointer { getgroups(groupCount,$0.baseAddress) }
+        try check(gotGroups > 0,"fixture supplementary groups available")
+        if let alternateGID = groupsForTest.first(where: { $0 != getegid() }) {
+            try check(chown(archivedFile.path,geteuid(),alternateGID) == 0,"fixture alternate file ownership")
+            try rejects("incorrect archived file group owner rejected") { _ = try parityStore.verifyBackup(metadataID) }
+            _ = chown(archivedFile.path,geteuid(),getegid())
+            try check(chown(archivedEmpty.path,geteuid(),alternateGID) == 0,"fixture alternate directory ownership")
+            try rejects("incorrect archived directory group owner rejected") { _ = try parityStore.verifyBackup(metadataID) }
+            _ = chown(archivedEmpty.path,geteuid(),getegid())
+        }
+        try check(restoredFile.uid == parityStore.metadata(cacheFile).0 && restoredFile.gid == parityStore.metadata(cacheFile).1 && restoredDir.uid == parityStore.metadata(emptyCache).0 && restoredDir.gid == parityStore.metadata(emptyCache).1,"original uid gid metadata independently retained")
+        let extra = metadataFolder.appendingPathComponent(restoredDir.name+"/unexpected")
+        try privateWrite(Data(),extra)
+        try rejects("unexpected contents in formerly empty directory rejected") { _ = try parityStore.verifyBackup(metadataID) }
+        try FileManager.default.removeItem(at:extra)
+        let absentWAL = metadataFolder.appendingPathComponent("knowledgeC.db-wal")
+        try privateWrite(Data(),absentWAL)
+        try rejects("explicit absent WAL unexpectedly present rejected") { _ = try parityStore.verifyBackup(metadataID) }
+        try FileManager.default.removeItem(at:absentWAL)
+        try check(try parityStore.verifyBackup(metadataID) == metadataManifest.revision,"backup verified again after fixture tampering repaired")
+        let beforeRename = try parityStore.fingerprint()
+        let renamedGroup = groups.appendingPathComponent("renamed-system-group")
+        let originalGroup = cache.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        try FileManager.default.moveItem(at:originalGroup,to:renamedGroup)
+        try check(try parityStore.fingerprint() != beforeRename,"revision binds original SystemGroup mapping not cache alias alone")
+        try FileManager.default.moveItem(at:renamedGroup,to:originalGroup)
+        let beforeAbsentChange = try parityStore.fingerprint()
+        try FileManager.default.removeItem(at:absentGroup)
+        try check(try parityStore.fingerprint() != beforeAbsentChange,"revision binds absent cache paths")
+
+        // Real active WAL fixture. New usage row exists ONLY in the WAL while a
+        // writer remains open. Source sidecars, modes, and timestamps must not
+        // change during read, preparation, backup or archive verification.
+        var walWriter: OpaquePointer?
+        try check(sqlite3_open(parityDB.path,&walWriter) == SQLITE_OK,"WAL writer fixture")
+        defer { sqlite3_close(walWriter) }
+        try check(sqlite3_exec(walWriter,"PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; INSERT INTO ZOBJECT (Z_ENT,Z_OPT,ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUESTRING,ZCREATIONDATE) VALUES (43,1,'/app/usage',700,900,'com.wal.only',700);",nil,nil,nil) == SQLITE_OK,"uncheckpointed WAL-only usage row")
+        func sqliteState(_ source: URL) throws -> [String:String] {
+            var out: [String:String] = [:]
+            for suffix in sqliteSuffixes {
+                let url = URL(fileURLWithPath:source.path+suffix)
+                var info = stat()
+                if lstat(url.path,&info) == 0 {
+                    let (hash,size) = try hashFile(url)
+                    out[suffix] = "\(hash)|\(size)|\(info.st_uid)|\(info.st_gid)|\(info.st_mode)|\(info.st_mtimespec.tv_sec)|\(info.st_mtimespec.tv_nsec)|\(info.st_ctimespec.tv_sec)|\(info.st_ctimespec.tv_nsec)"
+                } else { out[suffix] = "absent" }
+            }
+            return out
+        }
+        let walBefore = try sqliteState(parityDB)
+        try check(walBefore["-wal"] != "absent" && walBefore["-shm"] != "absent","active WAL and SHM exist")
+        do {
+            let readOnly = try KnowledgeDatabase(parityDB)
+            try check(try readOnly.sessions(start:600,end:1000).contains(StoredSession(bundle:"com.wal.only",start:700,end:900)),"private snapshot retains uncheckpointed WAL semantics")
+        }
+        _ = try parityStore.readSnapshot()
+        _ = try parityStore.prepareLocks(boundaryRequest)
+        try check(try sqliteState(parityDB) == walBefore,"all source SQLite bytes modes timestamps unchanged before verified backup")
+        let beforePrepCalls = calls.count
+        let beforePrepUsage = try boundedBytes(usagePath)
+        let beforePrepLock = try boundedBytes(lockPath)
+        var stoppedBeforeVerification = false
+        parityStore.duringBackup = { throw StorageFailure("fixture_stop","Stop after preparation, before backup verification") }
+        let prepRequest = ApplyRequest(start:0,end:300,sessions:[StoredSession(bundle:"com.wal.edit",start:60,end:180)],revision:try parityStore.fingerprint())
+        do { _ = try parityStore.apply(prepRequest) } catch let error as StorageFailure { stoppedBeforeVerification = error.code == "fixture_stop" }
+        parityStore.duringBackup = nil
+        try check(stoppedBeforeVerification,"apply preparation exercised then stopped before verified backup")
+        try check(try sqliteState(parityDB) == walBefore,"apply preparation and preverification backup leave original SQLite sidecars unchanged")
+        try check(try boundedBytes(usagePath) == beforePrepUsage && boundedBytes(lockPath) == beforePrepLock && calls.count == beforePrepCalls && FileManager.default.fileExists(atPath:cacheFile.path),"preverification failure leaves usage locks cache and refresh untouched")
+        let walID = try parityStore.backup()
+        try check(try sqliteState(parityDB) == walBefore,"backup creates no source SQLite changes")
+        let walFolder = parity.appendingPathComponent("Backups").appendingPathComponent(walID)
+        let archivedDB = walFolder.appendingPathComponent("knowledgeC.db")
+        let archivedBefore = try sqliteState(archivedDB)
+        _ = try parityStore.verifyBackup(walID)
+        _ = try parityStore.verifyBackup(walID)
+        do {
+            let archivedRead = try KnowledgeDatabase(archivedDB)
+            try check(try archivedRead.sessions(start:600,end:1000).contains(StoredSession(bundle:"com.wal.only",start:700,end:900)),"verified backup contains a consistent WAL-aware database")
+        }
+        try check(try sqliteState(archivedDB) == archivedBefore,"repeated verification never mutates archived database sidecars")
+        try check(try sqliteState(parityDB) == walBefore,"verified backup and queries never mutate original SQLite sidecars")
+
+        let activeWALSnapshot = try parityStore.readSnapshot()
+        let activeWALRequest = ApplyRequest(start:0,end:300,sessions:[StoredSession(bundle:"com.wal.applied",start:60,end:180)],revision:activeWALSnapshot.revision)
+        let activeWALResult = try parityStore.apply(activeWALRequest)
+        try check(activeWALResult.ok,"active WAL apply succeeds only after fresh verified backup")
+        let activeWALArchive = parity.appendingPathComponent("Backups").appendingPathComponent(activeWALResult.details["backupID"]!)
+        do {
+            let preWrite = try KnowledgeDatabase(activeWALArchive.appendingPathComponent("knowledgeC.db"))
+            try check(try !preWrite.sessions(start:0,end:300).contains(where: { $0.bundle == "com.wal.applied" }),"active WAL apply backup retains original prewrite rows")
+        }
+        try check(sqlite3_wal_checkpoint_v2(walWriter,nil,SQLITE_CHECKPOINT_TRUNCATE,nil,nil) == SQLITE_OK,"explicitly checkpoint fixture before absent-sidecar case")
+        try check(sqlite3_close(walWriter) == SQLITE_OK,"close checkpointed WAL fixture")
+        walWriter = nil
+        for suffix in ["-wal","-shm"] {
+            let sidecar = URL(fileURLWithPath:parityDB.path+suffix)
+            if FileManager.default.fileExists(atPath:sidecar.path) { try FileManager.default.removeItem(at:sidecar) }
+        }
+        try check(!FileManager.default.fileExists(atPath:parityDB.path+"-wal") && !FileManager.default.fileExists(atPath:parityDB.path+"-shm"),"closed WAL fixture genuinely has absent sidecars")
+        let closedWALSnapshot = try parityStore.readSnapshot()
+        let closedWALRequest = ApplyRequest(start:0,end:300,sessions:[StoredSession(bundle:"com.wal.closed",start:60,end:180)],revision:closedWALSnapshot.revision)
+        try check(try parityStore.apply(closedWALRequest).ok,"WAL-mode database with initially absent sidecars applies after verified absence backup")
         let response = try StorageProtocol.handle(HelperRequest(op:.read),storage:store)
         try check(response.ok && response.details["snapshot"] != nil,"read protocol")
         do {
