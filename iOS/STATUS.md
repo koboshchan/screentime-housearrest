@@ -49,3 +49,10 @@ The host build now compiles the actual App/HelperClient.swift with HOST_IPC_TEST
 HelperClient now closes the duplicated child pipe writer and rejects signal/unknown exits or mismatched ok/exit-status replies. This validates the stub command contract, NOT root escalation, authenticated production IPC, a live reader or writer. The synchronous transport still lacks a production timeout/cancellation contract and must not be enabled for privileged live work in this state.
 
 No existing .deb is available to parse: the invalid guessed artifact was retired. Parsing a fabricated ar/tar would not establish RootHide compatibility. Packaging remains refused until the official scheme/tooling and privileged layout are verified. No architecture-guessed archive has been recreated, executed, extracted or installed.
+
+
+## Final environment check
+
+The final read-only tool probe found THEOS set but pointing to an unverified toolchain location, ~/theos absent, ldid absent and dpkg-deb absent on this Mac. No tool installation was authorized or performed. The official RootHide docs require its Theos scheme (or an actual integrated Xcode devkit), randomized-root path conversion and generated .jbroot linkage. This project currently has neither verified scheme integration nor an authenticated root launch layout. Missing signing/packaging tools are an environment blocker; missing live transport/schema/writer integration is a separate implementation blocker. Installing tools alone will not make this a working editor.
+
+The final rerun compiled the unsigned iOS app/helper with no warnings, passed 14 model checks, 8 real Swift host IPC cases plus missing executable, and 8 Python stub protocol cases. package.py --production refused with exit 2 and no .deb. Offscreen shared-component light/dark renders were regenerated after the plain-language and contrast correction, then visually inspected with no clipping or legibility issue. These are not device screenshots or a runtime integration test. Actual app/helper platform metadata was IOS, minimum 15.0, SDK 27.2. No device or simulator install, protected-store read, backup or usage write was performed.
