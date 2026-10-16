@@ -17,8 +17,22 @@ PROCESSES = ('System Settings', 'ScreenTimePreferencesExtension',
 def discover(engine, api):
     backlight = Path('/private/var/db/biome/streams/restricted/Device.Display.Backlight/local')
     # Darwin supplies the CURRENT user's directory; never search other users.
-    directory = os.confstr('CS_DARWIN_USER_DIR')
-    api.require(directory, 'Cannot locate current-user Darwin cache.', 'reset_unavailable')
+    # CPython does not expose Apple's CS_DARWIN_USER_DIR in confstr_names.
+    # The native utility resolves the same key for the current user.
+    try:
+        result = subprocess.run(
+            ['/usr/bin/getconf', 'DARWIN_USER_DIR'],
+            capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        api.require(False, 'Cannot locate current-user Darwin cache: getconf failed.',
+                    'reset_unavailable')
+    directory = (result.stdout or '').strip()
+    api.require(result.returncode == 0 and not (result.stderr or '').strip()
+                and directory and '\n' not in directory and '\r' not in directory
+                and '\0' not in directory and Path(directory).is_absolute()
+                and Path(directory) != Path('/'),
+                'Cannot locate current-user Darwin cache: invalid getconf result.',
+                'reset_unavailable')
     cache = Path(directory).resolve() / 'com.apple.ScreenTimeAgent/Store/Library/com.apple.DeviceActivity/Local'
     return backlight, cache
 
