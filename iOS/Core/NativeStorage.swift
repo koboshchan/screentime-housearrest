@@ -201,14 +201,19 @@ public final class NativeStorage {
     let stream: URL
     let backups: URL
     public convenience init() {
-        self.init(database:URL(fileURLWithPath:"/private/var/mobile/Library/CoreDuet/Knowledge/knowledgeC.db"),
+        self.init(fixedDatabase:URL(fileURLWithPath:"/private/var/mobile/Library/CoreDuet/Knowledge/knowledgeC.db"),
                   stream:URL(fileURLWithPath:"/private/var/mobile/Library/Biome/streams/restricted/ScreenTime.AppUsage/local"),
                   backups:URL(fileURLWithPath:"/private/var/mobile/Library/ScreenTimeEditor/Backups"))
     }
-    // This initializer is internal. The helper protocol never accepts paths.
-    init(database: URL, stream: URL, backups: URL) {
+    private init(fixedDatabase database: URL, stream: URL, backups: URL) {
         self.database = database; self.stream = stream; self.backups = backups
     }
+    #if HOST_STORAGE_TEST
+    // Excluded from shipping app/helper. There is no path input in the wire protocol.
+    convenience init(database: URL, stream: URL, backups: URL) {
+        self.init(fixedDatabase:database,stream:stream,backups:backups)
+    }
+    #endif
     func segments() throws -> [URL] {
         try rejectLinks(stream)
         let files = try FileManager.default.contentsOfDirectory(at:stream,includingPropertiesForKeys:nil)
