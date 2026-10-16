@@ -59,7 +59,7 @@ public enum SessionRules {
 
 // MARK: helper wire format (fixed operations only)
 
-public enum HelperOp: String, Codable, CaseIterable { case probe, backup, verifyBackup, apply }
+public enum HelperOp: String, Codable, CaseIterable { case probe, read, backup, verifyBackup, apply }
 
 public struct HelperReply: Codable, Equatable {
     public var ok: Bool
@@ -86,7 +86,11 @@ public enum Capability: Equatable {
     /// Fail closed: only an explicit, fully ok probe reply with supported schema enables apply.
     public static func from(_ r: HelperReply?) -> Capability {
         guard let r else { return .unknown("Helper did not answer.") }
-        // No production integration exists. Never trust a reply to enable writes.
-        return .readOnly(r.ok ? "Live access is disabled in this build." : r.message)
+        guard r.ok, r.code == ready, r.details[root] == 1,
+              r.details[schema] == supported, r.details[protocol] == native-v1,
+              r.details[authenticated] == 1, r.details[writer] == original_local_native else {
+            return .readOnly(r.message)
+        }
+        return .ready
     }
 }
