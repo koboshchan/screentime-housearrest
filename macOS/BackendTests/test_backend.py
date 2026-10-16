@@ -66,6 +66,66 @@ class Tests(unittest.TestCase):
         self.assertEqual([(x["start"],x["end"]) for x in read["sessions"]],[(100,200)])
         self.assertTrue(read["canApply"])
 
+    def test_nonactive_states_preserved_and_ignored_by_reader(self):
+        # Zero-length state 3/4 footers between active events must not reset
+        # the active payload offset, regardless of their timestamp metadata.
+        raw = bytearray(segment([(True,100,"com.test.App"),(False,200,"com.test.App")]))
+        first_footer = bytes(raw[-16:])
+        second_footer = bytes(raw[-32:-16])
+        struct.pack_into("<I",raw,4,4)
+        raw[-16:] = first_footer
+        struct.pack_into("<IId",raw,len(raw)-32,0,3,float("nan"))
+        struct.pack_into("<IId",raw,len(raw)-48,0,4,0)
+        raw[-64:-48] = second_footer
+        header, records = b.parse_segment(raw)
+        self.assertEqual([r[0] for r in records],[1,3,4,1])
+        self.assertEqual(records[1][3],b"")
+        (self.engine.stream/"a").write_bytes(raw)
+        (self.engine.stream/"b").unlink()
+        sessions = self.engine.read()["sessions"]
+        self.assertEqual([(s["start"],s["end"]) for s in sessions],[(100,200)])
+
+    def test_nonactive_opaque_payload_and_roundtrip(self):
+        data = bytearray(segment([]))
+        struct.pack_into("<I",data,4,3)
+        data[32:35] = b"xyz"
+        struct.pack_into("<IId",data,len(data)-16,3,3,0)
+        struct.pack_into("<IId",data,len(data)-32,0,4,0)
+        struct.pack_into("<IId",data,len(data)-48,0,0xffffffff,0)
+        header, records = b.parse_segment(data)
+        self.assertEqual([(r[0],r[3]) for r in records],[(3,b"xyz"),(4,b""),(0xffffffff,b"")])
+        from types import SimpleNamespace
+        api = SimpleNamespace(**vars(b))
+        rebuilt = b.original_local.build_segb_v2(header,records,api)
+        self.assertEqual(b.parse_segment(rebuilt)[1],records)
+        self.assertEqual(struct.unpack_from("<I",rebuilt,len(rebuilt)-32)[0],0)
+
+    def test_nonactive_invalid_payload_range_uses_original_empty_fallback(self):
+        data = bytearray(segment([]))
+        struct.pack_into("<I",data,4,1)
+        struct.pack_into("<IId",data,len(data)-16,len(data)+100,3,0)
+        self.assertEqual(b.parse_segment(data)[1],[(3,0,0,b"")])
+
+    def test_reader_uses_footer_timestamp_like_original(self):
+        raw = bytearray(segment([(True,110,"com.test.App"),(False,220,"com.test.App")]))
+        struct.pack_into("<d",raw,len(raw)-8,100)
+        struct.pack_into("<d",raw,len(raw)-24,200)
+        (self.engine.stream/"a").write_bytes(raw)
+        (self.engine.stream/"b").unlink()
+        sessions = self.engine.read()["sessions"]
+        self.assertEqual([(s["start"],s["end"]) for s in sessions],[(100,200)])
+
+    def test_reader_skips_undecodable_payload_like_original(self):
+        raw = bytearray(segment([(True,100,"com.test.App")]))
+        # Keep the SEGB checksum valid but make protobuf undecodable.
+        end = struct.unpack_from("<I",raw,len(raw)-16)[0]
+        raw[40] = 0
+        struct.pack_into("<I",raw,32,zlib.crc32(raw[40:32+end]))
+        (self.engine.stream/"a").write_bytes(raw)
+        read = self.engine.read()
+        self.assertEqual(read["sessions"],[])
+        self.assertTrue(any("1 undecodable" in warning for warning in read["warnings"]))
+
     def test_crc(self):
         path = self.engine.stream / "a"
         data = bytearray(path.read_bytes()); data[44] ^= 1; path.write_bytes(data)

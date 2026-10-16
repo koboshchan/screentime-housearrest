@@ -18,7 +18,7 @@ def build_segb_v2(header, records, api):
     for state, timestamp, flag, payload in records:
         aligned = (offset + 3) & ~3
         end = aligned + len(payload) + (8 if state == 1 else 0)
-        if state == 0 and not payload:
+        if state != 1 and not payload:
             continue
         api.require(32 + end <= boundary, 'Edited events exceed segment capacity.', 'segment_capacity')
         offset = end
@@ -33,7 +33,7 @@ def build_segb_v2(header, records, api):
         else:
             start = 32 + aligned
         end = aligned + len(payload) + (8 if state == 1 else 0)
-        if state == 0 and not payload:
+        if state != 1 and not payload:
             end = 0
         else:
             data[start:start + len(payload)] = payload

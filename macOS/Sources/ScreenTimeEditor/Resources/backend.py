@@ -111,20 +111,23 @@ def parse_segment(data):
     records = []
     for index in range(count):
         end, state, timestamp = struct.unpack_from("<IId", data, len(data) - 16 * (index + 1))
-        finite(timestamp)
         aligned = (previous + 3) & ~3
-        require(state in (0, 1), "Unsupported SEGB record state.")
-        if state == 0 and end == 0:
-            records.append((state, timestamp, 0, b""))
+        # Original SEGBV2.parse retains every non-active state as opaque data;
+        # ScreenTimeStore consumes only state 1. States 3/4 occur in real footers,
+        # not unsupported usage events. An empty footer does not reset prevEnd.
+        if state != 1:
+            payload = data[32 + aligned:32 + end] if end > aligned and 32 + end <= boundary else b""
+            records.append((state, timestamp, 0, payload))
+            if end > 0:
+                previous = end
             continue
+        finite(timestamp)
         require(end >= aligned and 32 + end <= boundary, "SEGB payload/footer overlap or invalid offset.")
         if state == 1:
             require(end >= aligned + 8, "Truncated SEGB active record.")
             crc, flag = struct.unpack_from("<II", data, 32 + aligned)
             payload = data[32 + aligned + 8:32 + end]
             require(zlib.crc32(payload) & 0xffffffff == crc, "SEGB CRC mismatch.")
-        else:
-            flag, payload = 0, data[32 + aligned:32 + end]
         records.append((state, timestamp, flag, payload))
         previous = end
     return (created, version, flags, reserved, len(data)), records
@@ -316,13 +319,19 @@ class Engine:
         try:
             before = self.fingerprint()
             events = []
+            skipped_payloads = 0
             for path in self.source_paths():
                 _, records = parse_segment(checked_bytes(path))
                 for index, (state, timestamp, flag, payload) in enumerate(records):
                     if state == 1:
-                        starting, when, bundle = decode_usage(payload)
-                        require(abs(when - timestamp) <= 0.001, "AppUsage record/payload timestamp mismatch.")
-                        events.append((starting, when, bundle, path.name + ":" + str(index)))
+                        # Original ScreenTimeStore skips undecodable payloads and
+                        # uses the SEGB footer timestamp, not the protobuf clock.
+                        try:
+                            starting, _, bundle = decode_usage(payload)
+                        except StorageError:
+                            skipped_payloads += 1
+                            continue
+                        events.append((starting, timestamp, bundle, path.name + ":" + str(index)))
             conn = self.open_database()
             try:
                 columns = {row[1] for row in conn.execute("PRAGMA table_info(ZOBJECT)")}
@@ -335,6 +344,8 @@ class Engine:
             finally:
                 conn.close()
             sessions, warnings = paired_sessions(events)
+            if skipped_payloads:
+                warnings.append(str(skipped_payloads) + " undecodable AppUsage payloads skipped, matching the original reader.")
             after = self.fingerprint()
             require(before == after, "Sources changed during read; retry.", "concurrent_change")
             warnings.append("Native Screen Time UI aggregation and cross-device synchronization are not verified.")
