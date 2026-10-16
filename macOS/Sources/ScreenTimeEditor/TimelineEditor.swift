@@ -25,9 +25,11 @@ struct TimelineEditor: View {
         ContentUnavailableView("No minute-long sessions", systemImage: "clock",
           description: Text("Turn on Show apps under 1m total in the sidebar to see the short records."))
       } else {
+      let contentH = axisH + CGFloat(lanes.count) * laneH
+      ScrollView(.vertical) {
       GeometryReader { geo in
       let w = max(1, geo.size.width - labelW) * model.timelineZoom
-      ScrollView([.horizontal, .vertical]) {
+      ScrollView(.horizontal) {
         ZStack(alignment: .topLeading) {
           Canvas { ctx, size in
             for h in 0...ticks {
@@ -50,12 +52,12 @@ struct TimelineEditor: View {
             }
           }
         }.frame(width: labelW + w, height: axisH + CGFloat(lanes.count) * laneH, alignment: .topLeading)
-          .frame(minHeight: geo.size.height, alignment: .topLeading)
       }.defaultScrollAnchor(.topLeading)
-
-      }
-      }
+      }.frame(height: contentH)
+      }.frame(maxHeight: .infinity, alignment: .top)
     }
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     .accessibilityElement(children: .contain).accessibilityLabel("Timeline. Use the session list to edit with the keyboard.")
   }
 }
