@@ -1,7 +1,8 @@
 """SIP-off local reset, adapted from the private original injector.
-No remote access, credentials, elevation, permission changes or import side effects.
-The app has no installed privileged helper. Denied system-store access fails closed.
+No remote access, stored credentials, permission changes or import side effects.
+A signed one-shot helper authorizes fixed system Backlight access only.
 """
+from contextlib import nullcontext
 import hashlib
 import json
 import os
@@ -10,6 +11,10 @@ import sqlite3
 import stat
 import struct
 import subprocess
+
+# Only the immutable signed helper supplies a scoped effective-UID context.
+# Normal app/backend processes cannot elevate through this hook.
+system_privileges = nullcontext
 
 PROCESSES = ('System Settings', 'ScreenTimePreferencesExtension',
              'UsageTrackingAgent', 'ScreenTimeAgent')
@@ -37,17 +42,18 @@ def discover(engine, api):
     return backlight, cache
 
 def inventory(backlight, cache, api):
-    api.no_symlink_parents(backlight)
-    api.require(backlight.is_dir(), 'Backlight stream missing.', 'reset_unavailable')
-    files = {}
-    for path in sorted(backlight.iterdir()):
-        if path.name.startswith('.') or path.name in ('lock', 'tombstone'):
-            continue
-        api.require(path.is_file() and not path.is_symlink(), 'Unsafe backlight entry.', 'unsafe_path')
-        api.parse_segment(api.checked_bytes(path))
-        files['backlight/' + path.name] = path
-    api.require(files, 'No backlight segments found.', 'reset_unavailable')
-    api.require(len(files) <= 10000, 'Too many backlight segments.', 'reset_unavailable')
+    with system_privileges():
+        api.no_symlink_parents(backlight)
+        api.require(backlight.is_dir(), 'Backlight stream missing.', 'reset_unavailable')
+        files = {}
+        for path in sorted(backlight.iterdir()):
+            if path.name.startswith('.') or path.name in ('lock', 'tombstone'):
+                continue
+            api.require(path.is_file() and not path.is_symlink(), 'Unsafe backlight entry.', 'unsafe_path')
+            api.parse_segment(api.checked_bytes(path))
+            files['backlight/' + path.name] = path
+        api.require(files, 'No backlight segments found.', 'reset_unavailable')
+        api.require(len(files) <= 10000, 'Too many backlight segments.', 'reset_unavailable')
     directories = []
     # Check ancestors even when Local does not exist, avoiding dangling symlinks.
     ancestor = cache
@@ -74,9 +80,11 @@ def inventory(backlight, cache, api):
         walk(cache)
     state = dict(backlight=str(backlight), cache=str(cache), cacheExists=exists, directories=directories)
     for key, path in files.items():
-        info = path.stat()
+        with system_privileges() if key.startswith('backlight/') else nullcontext():
+            info = path.stat()
+            size, digest = api.file_digest(path)
         state.setdefault('files', {})[key] = dict(source=str(path), mode=stat.S_IMODE(info.st_mode),
-            uid=info.st_uid, gid=info.st_gid, size=info.st_size, sha256=api.file_digest(path)[1])
+            uid=info.st_uid, gid=info.st_gid, size=size, sha256=digest)
     return state, files
 
 def prepare(engine, start, end, sessions, api, paths=None):
@@ -104,12 +112,16 @@ def prepare(engine, start, end, sessions, api, paths=None):
                     'Backlight writer requires knowledgeC ZVALUEINTEGER.', 'unsupported_schema')
     finally: conn.close()
     light = [(key, path) for key, path in files.items() if key.startswith('backlight/')]
-    # Rewrite all segments containing the day, inject once into the latest
-    # header-created segment (numeric filenames are not a stable API).
-    parsed = [(path, api.checked_bytes(path)) for _, path in light]
-    latest = max(parsed, key=lambda item: (api.parse_segment(item[1])[0][0], item[0].name))[0]
+    # Original remote script targets one hardcoded Backlight segment.
+    # Local adaptation resolves one latest lexically named segment, matching
+    # inject_local_mac.latest_segb_file, not header creation-time heuristics.
+    with system_privileges():
+        parsed = [(path, api.checked_bytes(path)) for _, path in light]
+    latest = max(parsed, key=lambda item: item[0].name)[0]
     edits = []
     for path, raw in parsed:
+        if path != latest:
+            continue
         header, records = api.parse_segment(raw)
         kept = [r for r in records if r[1] < start or r[1] >= end]
         if path == latest:
@@ -132,7 +144,13 @@ def snapshot(plan, destination, api):
         state['files'] = {key:dict(record) for key,record in state.get('files', {}).items()}
         for index,(key,path) in enumerate(sorted(plan['files'].items())):
             name = 'file-' + str(index)
-            size,digest = api.copy_private(path, destination/name)
+            if key.startswith('backlight/'):
+                with system_privileges():
+                    raw = api.checked_bytes(path)
+                api.private_file(destination/name, raw)
+                size, digest = len(raw), hashlib.sha256(raw).hexdigest()
+            else:
+                size,digest = api.copy_private(path, destination/name)
             record = state['files'][key]
             api.require((size,digest)==(record['size'],record['sha256']),
                         'Reset source changed before backup.', 'backup_failed')
@@ -187,15 +205,16 @@ def verify(destination, plan, api):
     return state
 
 def preflight(plan, api, access=os.access):
-    # No elevation is claimed. A native privileged helper is not installed.
-    for path,raw,_ in plan['edits']:
-        api.no_symlink_parents(path)
-        api.require(api.checked_bytes(path)==raw, 'Backlight changed before reset.', 'concurrent_change')
-        api.require(access(path,os.W_OK), 'Backlight write denied; no native privileged helper installed.', 'permission_denied')
+    # Only the sealed helper supplies scoped system privileges; user cache stays user-owned.
+    with system_privileges():
+        for path,raw,_ in plan['edits']:
+            api.no_symlink_parents(path)
+            api.require(api.checked_bytes(path)==raw, 'Backlight changed before reset.', 'concurrent_change')
+            api.require((os.access(path, os.W_OK, effective_ids=True) if system_privileges is not nullcontext else access(path,os.W_OK)), 'Backlight write denied after authorization.', 'permission_denied')
     cache = plan['cache']
     if plan['state']['cacheExists']:
         for path in [cache.parent] + [cache / d['path'] for d in plan['state']['directories']]:
-            api.require(access(path,os.W_OK|os.X_OK), 'DeviceActivity reset denied; no native privileged helper installed.', 'permission_denied')
+            api.require(access(path,os.W_OK|os.X_OK), 'Current-user DeviceActivity reset denied.', 'permission_denied')
     current,_ = inventory(plan['backlight'],cache,api)
     api.require(current == plan['state'], 'Reset stores changed after backup.', 'concurrent_change')
 
@@ -209,20 +228,22 @@ def stop_processes(api, runner=subprocess.run):
 
 def perform(engine, plan, api, runner=subprocess.run):
     # All calls happen after both snapshots verified independently and preflight.
-    for path,original,serialized in plan['edits']:
-        api.no_symlink_parents(path)
-        api.require(api.checked_bytes(path)==original,'Backlight changed before write.','concurrent_change')
-        before=path.stat()
-        fd=os.open(path,os.O_WRONLY|getattr(os,'O_NOFOLLOW',0))
-        try:
-            now=os.fstat(fd)
-            api.require((now.st_dev,now.st_ino,now.st_size,now.st_mtime_ns,now.st_ctime_ns)==
-                        (before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns,before.st_ctime_ns),
-                        'Backlight replaced before write.','concurrent_change')
-            with os.fdopen(fd,'wb',closefd=False) as f:
-                f.write(serialized); f.flush(); os.ftruncate(fd,len(serialized)); os.fsync(fd)
-        finally: os.close(fd)
-        api.require(api.checked_bytes(path)==serialized,'Backlight write verification failed.','reset_failed')
+    with system_privileges():
+        for path,original,serialized in plan['edits']:
+            api.no_symlink_parents(path)
+            api.require(api.checked_bytes(path)==original,'Backlight changed before write.','concurrent_change')
+            before=path.stat()
+            api.require(before.st_nlink == 1, 'Hardlinked backlight refused.', 'unsafe_path')
+            fd=os.open(path,os.O_WRONLY|getattr(os,'O_NOFOLLOW',0))
+            try:
+                now=os.fstat(fd)
+                api.require((now.st_dev,now.st_ino,now.st_size,now.st_mtime_ns,now.st_ctime_ns)==
+                            (before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns,before.st_ctime_ns),
+                            'Backlight replaced before write.','concurrent_change')
+                with os.fdopen(fd,'wb',closefd=False) as f:
+                    f.write(serialized); f.flush(); os.ftruncate(fd,len(serialized)); os.fsync(fd)
+            finally: os.close(fd)
+            api.require(api.checked_bytes(path)==serialized,'Backlight write verification failed.','reset_failed')
     with sqlite3.connect(engine.database.as_uri()+'?mode=rw',uri=True,timeout=2) as conn:
         conn.execute("DELETE FROM ZOBJECT WHERE ZSTREAMNAME='/display/isBacklit' AND ZENDDATE>? AND ZSTARTDATE<?",
                      (plan['start'],plan['end']))
@@ -249,3 +270,71 @@ def perform(engine, plan, api, runner=subprocess.run):
                     capture_output=True,text=True,timeout=10,check=False)
     api.require(result.returncode == 0, 'UsageTrackingAgent restart failed: '+(result.stderr or '').strip(), 'reset_failed')
     return 'SUCCESS_RESET_COMPLETED'
+
+def authorized_apply(request, api):
+    """Launch only the signed embedded helper through a user-approved prompt.
+
+    Stage a private root-owned copy before signature verification/execution so a
+    user-writable bundle cannot be swapped after verification. No persistent
+    service, password storage, root Python file or arbitrary command API exists.
+    """
+    import base64
+    import shlex
+    api.require(isinstance(request, dict) and not
+                (set(request) - {'command', 'dayStart', 'dayEnd', 'sessions',
+                                 'revision', 'overrideSourceChanges'}),
+                'Unsupported administrator Apply fields.', 'invalid_input')
+    helper = Path(__file__).resolve()
+    parents = [p for p in helper.parents if p.suffix == '.app']
+    api.require(len(parents) == 1, 'Administrator Apply requires the signed app bundle.',
+                'admin_helper_unavailable')
+    executable = parents[0] / 'Contents/MacOS/ScreenTimeAdminHelper'
+    api.no_symlink_parents(executable)
+    api.require(executable.is_file(), 'Signed administrator helper is missing.',
+                'admin_helper_unavailable')
+    # Bundle location and environment are not authority. Independently verify
+    # the signed enclosing app, then the pinned helper inside its resource seal.
+    identity = 'certificate leaf = H"5BAC8837B31A6449CA39EFA3CB494F24AD366428"'
+    for target, identifier in ((parents[0], 'app.screentimeeditor.macos'),
+                               (executable, 'ScreenTimeAdminHelper')):
+        requirement_check = '=identifier "' + identifier + '" and ' + identity
+        checked = subprocess.run(['/usr/bin/codesign', '--verify', '--strict',
+                                  '-R', requirement_check, str(target)],
+                                 capture_output=True, text=True, check=False)
+        api.require(checked.returncode == 0,
+                    'Administrator Apply requires the intact signed app and helper.',
+                    'admin_helper_unavailable')
+    raw = json.dumps(dict(request, command='apply'), allow_nan=False).encode()
+    api.require(len(raw) <= 65536, 'Apply request exceeds administrator transport limit.',
+                'invalid_input')
+    payload = base64.b64encode(raw).decode('ascii')
+    # This persistent local signing certificate is also pinned by signing.sh.
+    # A changed signing identity must deliberately update this build-time pin.
+    requirement = '=identifier "ScreenTimeAdminHelper" and certificate leaf = H"5BAC8837B31A6449CA39EFA3CB494F24AD366428"'
+    q = shlex.quote
+    shell = (
+        'set -eu; umask 077; '
+        'd=$(/usr/bin/mktemp -d /private/var/tmp/ScreenTimeAdmin.XXXXXXXX); '
+        'trap \'/bin/rm -rf "$d"\' EXIT; '
+        '/bin/cp '+q(str(executable))+' "$d/helper"; '
+        '/bin/chmod 500 "$d/helper"; '
+        '/usr/bin/codesign --verify --strict -R '+q(requirement)+' "$d/helper" >&2; '
+        '"$d/helper" '+q(payload)+' '+str(os.getuid())+' || true')
+    # JSON string quoting is valid AppleScript for these ASCII escaped strings.
+    script = 'do shell script ' + json.dumps(shell, ensure_ascii=False) + ' with administrator privileges'
+    result = subprocess.run(['/usr/bin/osascript', '-e', script],
+                            capture_output=True, text=True, check=False)
+    try:
+        response = json.loads(result.stdout)
+    except (ValueError, TypeError):
+        message = (result.stderr or '').strip()
+        cancelled = '-128' in message or 'canceled' in message.lower() or 'cancelled' in message.lower()
+        raise api.StorageError(
+            'Administrator authorization cancelled; no stores changed.' if cancelled else
+            'Administrator Apply did not complete. '+message,
+            'admin_cancelled' if cancelled else 'admin_apply_failed')
+    api.require(isinstance(response, dict), 'Invalid administrator response.', 'admin_apply_failed')
+    if result.returncode or response.get('error'):
+        raise api.StorageError(response.get('error', 'Administrator Apply failed.'),
+                               response.get('code', 'admin_apply_failed'))
+    return response

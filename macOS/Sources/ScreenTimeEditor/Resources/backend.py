@@ -366,6 +366,18 @@ class Engine:
             raise StorageError("Cannot read knowledgeC: " + str(exc), "read_failed") from exc
 
     def apply(self, request):
+        # SIP-off instant reset uses a one-shot native administrator prompt.
+        # No draft mutation/read/retry occurs on cancellation or failure.
+        # Fixture paths and immutable authorized subprocess never prompt again.
+        if (not globals().get("AUTHORIZED_HELPER", False)
+                and self.reset_paths is None
+                and self.status_provider().get("sip") == "disabled"):
+            api = sys.modules.get(__name__)
+            if api is None:
+                from types import SimpleNamespace
+                api = SimpleNamespace(**globals())
+            validate_edit(request)
+            return local_reset.authorized_apply(request, api)
         start, end, sessions = validate_edit(request)
         override = request.get("overrideSourceChanges", False)
         require(type(override) is bool, "Override must be a boolean.", "invalid_input")
@@ -380,8 +392,8 @@ class Engine:
             api = SimpleNamespace(**globals())
         plan = original_local.prepare(self, start, end, sessions, api)
         # Original LOCAL backend never accesses system Biome or clears DeviceActivity.
-        # Legacy reset is kept only for isolated Python fixtures with explicit paths;
-        # the shipping CLI never accepts these paths or enables this mechanism.
+        # Reset paths come only from the immutable authorized helper or isolated
+        # test fixtures, never CLI/request-supplied filesystem paths.
         reset = self.reset_paths is not None and self.status_provider().get("sip") == "disabled"
         reset_plan = local_reset.prepare(self, start, end, sessions, api, self.reset_paths) if reset else None
         root = self.home / "Library/Application Support/ScreenTimeEditor/Backups"

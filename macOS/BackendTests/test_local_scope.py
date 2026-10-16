@@ -1,12 +1,12 @@
-"""Original local route stays user-only even with SIP disabled. Temp fixtures only."""
+"""SIP-on and unknown local routes stay user-only. SIP-off dispatch tested separately."""
 from pathlib import Path
 from unittest.mock import patch
 import test_original_local
 b=test_original_local.b
 
 class LocalScopeTests(test_original_local.OriginalTests):
-    def test_all_sip_states_keep_original_local_scope(self):
-        for sip in ("enabled","disabled","unknown"):
+    def test_non_admin_sip_states_keep_original_local_scope(self):
+        for sip in ("enabled","unknown"):
             with self.subTest(sip=sip):
                 self.engine.status_provider=lambda:dict(sip=sip)
                 with patch.object(b.local_reset,"prepare",side_effect=AssertionError("system access")) as system, patch.object(b.subprocess,"run",side_effect=AssertionError("unexpected subprocess")):

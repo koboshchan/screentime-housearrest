@@ -7,6 +7,10 @@ BIN=$(swift build -c release --show-bin-path)
 APP=build/ScreenTimeEditor.app
 rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/ScreenTimeEditor" "$APP/Contents/MacOS/"
+# Immutable embedded backend, isolated interpreter, no writable root script.
+python3 scripts/build_admin_helper.py
+xcrun swiftc -O -target arm64-apple-macos26.0 .build/admin-helper/main.swift -o "$APP/Contents/MacOS/ScreenTimeAdminHelper"
+bash scripts/signing.sh --sign "$APP/Contents/MacOS/ScreenTimeAdminHelper"
 cp -R "$BIN/ScreenTimeEditor_ScreenTimeEditor.bundle" "$APP/Contents/Resources/" 2>/dev/null || cp -R "$BIN"/*.bundle "$APP/Contents/Resources/"
 cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
