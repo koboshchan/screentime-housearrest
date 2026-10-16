@@ -6,21 +6,23 @@ import tempfile
 
 root = Path(__file__).resolve().parents[1]
 count = 0
-with tempfile.TemporaryDirectory() as d:
-    env = dict(os.environ, JBROOT=d)
-    before = list(Path(d).iterdir())
-    for args in (["probe"], ["backup"], ["verifyBackup"], ["apply"], [], ["bogus"],
-                 ["backup", "00000000-0000-0000-0000-000000000000"], ["probe", "../x"]):
-        p = subprocess.run([str(root / "build/helper-host-stub"), *args],
-                           capture_output=True, env=env, timeout=5)
-        r = json.loads(p.stdout)
-        assert p.returncode == 2 and r["ok"] is False
-        assert r["code"] == ("integration_unavailable" if len(args) == 1 and args[0] in
-                              ("probe", "backup", "verifyBackup", "apply") else "bad_request")
+with tempfile.TemporaryDirectory() as directory:
+    env = dict(os.environ, JBROOT=directory)
+    before = list(Path(directory).iterdir())
+    for args in ([], ["probe"], ["backup"], ["verifyBackup"], ["apply"], ["read"],
+                 ["bogus"], ["backup", "../x"], ["probe", "unexpected"]):
+        result = subprocess.run([str(root / "build/helper-host-stub"), *args],
+                                input=b'{"op":"probe"}', capture_output=True,
+                                env=env, timeout=5)
+        reply = json.loads(result.stdout)
+        assert result.returncode == 2 and reply["ok"] is False
+        assert reply["code"] == ("auth_unavailable" if not args else "bad_request")
         count += 1
-    assert list(Path(d).iterdir()) == before
-p = subprocess.run(["python3", str(root / "package.py"), "--production"],
-                   capture_output=True, timeout=5)
-assert p.returncode == 2 and b"REFUSED" in p.stderr
-assert not list((root / "build").glob("*.deb"))
-print(f"PASS {count} stub protocol cases; injected environment unused; packaging refused; no .deb")
+    assert list(Path(directory).iterdir()) == before
+for filename in ("Core/NativeStorage.swift", "App/HelperClient.swift"):
+    source = (root / filename).read_text()
+    gate = "HOST_STORAGE_TEST" if filename.startswith("Core") else "HOST_IPC_TEST"
+    assert "#if " + gate in source
+request = (root / "Core/Request.swift").read_text()
+assert "public var path" not in request and "public var layout" not in request
+print(f"PASS {count} fail-closed helper cases; no fixture filesystem access; production request has no paths")
