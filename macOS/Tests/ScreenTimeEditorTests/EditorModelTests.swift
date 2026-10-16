@@ -108,7 +108,7 @@ final class EditorModelTests: XCTestCase {
     var s = m.sessions[0]; s.end += 600; m.commitEdit(s)
     await m.apply()
     XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("apply.log").path))
-    XCTAssertTrue(m.applyMessage?.contains("/tmp/fixture-backup") == true)
+    XCTAssertTrue(m.applyMessage?.contains("/tmp/fixture-backup") == true); XCTAssertTrue(m.applyMessage?.contains("Log out") == true)
   }
   func testReadCheckReportPrivateAndSanitized() async throws {
     let m = try await model()

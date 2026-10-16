@@ -157,12 +157,12 @@ final class EditorModel {
       sessions: sessions.map { ApplySession(id: $0.id, bundle: $0.bundle, start: $0.start, end: $0.end) }, revision: revision)
     do {
       let r = try await backend.apply(req)
-      guard let backup = r.backup?.trimmingCharacters(in: .whitespacesAndNewlines), !backup.isEmpty else {
+      guard let backup = r.backupLocation else {
         applyMessage = "The backend did not report a backup, so this change is not confirmed. Reload before trying again."
         stale = true; return
       }
       let st = (r.status ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-      applyMessage = "Backup saved at \(backup). Backend status: \(st.isEmpty ? "none reported" : st)."
+      applyMessage = "Backup saved at \(backup). Backend status: \(st.isEmpty ? "none reported" : st). Log out and back in, or restart, for Screen Time to show the change."
       await load()
     } catch { applyMessage = "Not applied: \(error.localizedDescription)" }
   }

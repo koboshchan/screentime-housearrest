@@ -70,8 +70,8 @@ struct Footer: View {
   @Environment(EditorModel.self) private var model
   var body: some View {
     HStack {
-      if let msg = model.applyMessage { Text(msg).font(.callout).lineLimit(2) }
-      else if let why = model.applyBlockedReason { Text(why).font(.callout).foregroundStyle(.secondary).lineLimit(2) }
+      if let msg = model.applyMessage { Text(msg).font(.callout).lineLimit(3) }
+      else if let why = model.applyBlockedReason { Text(why).font(.callout).foregroundStyle(.secondary).lineLimit(3) }
       else if model.dirty { Text("Unapplied changes").font(.callout).foregroundStyle(.secondary) }
       Spacer()
       if model.applying { ProgressView().controlSize(.small) }

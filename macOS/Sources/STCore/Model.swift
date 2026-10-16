@@ -64,8 +64,10 @@ public struct ApplyRequest: Codable, Sendable {
 }
 public struct ApplyResult: Codable, Sendable {
   public var backup: String?
+  public var backupPath: String?
   public var path: String?
   public var status: String?
+  public var backupLocation: String? { [backup, backupPath].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty } }
 }
 
 public enum DayMath {

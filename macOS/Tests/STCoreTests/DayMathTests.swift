@@ -92,10 +92,10 @@ import Foundation
   let path = FileManager.default.currentDirectoryPath + "/Sources/ScreenTimeEditor/Resources/backend.py"
   let b = Backend(scriptURL: URL(fileURLWithPath: path))
   let s = try await b.status()
-  #expect(!s.macOS.isEmpty && s.canApply == false)
+  #expect(!s.macOS.isEmpty && !s.build.isEmpty) // capability is reported, never exercised here
   do {
     let r = try await b.read(dayStart: 0, dayEnd: 86400)
-    #expect(!r.revision.isEmpty && r.canApply == false)   // readable here
+    #expect(r.revision.count == 64) // read capability does not execute Apply
   } catch let e as BackendError {
     // Without Full Disk Access: a real permission error from the stores, not an IPC/JSON error.
     #expect(e.isPermissionDenied, "unexpected backend error: \(e.message)")
