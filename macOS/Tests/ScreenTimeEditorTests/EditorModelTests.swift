@@ -28,6 +28,11 @@ final class EditorModelTests: XCTestCase {
         s = req["dayStart"]
         print(json.dumps({"sessions":[{"id":"a","bundle":"com.x.a","start":s+3600,"end":s+7200},{"id":"b","bundle":"com.x.b","start":s+10800,"end":s+14400}],"revision":"r1","canApply":\(canApply ? "True" : "False")}))
     elif c == "apply":
+        if os.path.exists(r"\(dir.path)/changed") and not req.get("overrideSourceChanges",False):
+            print(json.dumps({"error":"Screen Time data changed since you loaded it.","code":"stale_revision"})); sys.exit(0)
+        if os.path.exists(r"\(dir.path)/backup-fail"):
+            print(json.dumps({"error":"Fresh backup failed","code":"backup_failed"})); sys.exit(0)
+        open(r"\(dir.path)/request.json","w").write(json.dumps(req))
         open(r"\(logPath)","a").write("x")
         print(json.dumps({"backupPath":"/tmp/fixture-backup","status":"SUCCESS_LOGOUT_REQUIRED","logoutRequired":True}))
     """
@@ -109,6 +114,50 @@ final class EditorModelTests: XCTestCase {
     await m.apply()
     XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("apply.log").path))
     XCTAssertTrue(m.applyMessage?.contains("/tmp/fixture-backup") == true); XCTAssertTrue(m.applyMessage?.contains("Log out") == true); XCTAssertFalse(m.applyMessage?.contains("SUCCESS_LOGOUT") == true)
+  }
+  func staleModel() async throws -> EditorModel {
+    let m = try await model()
+    var s = m.sessions[0]; s.end += 600; m.commitEdit(s)
+    try Data().write(to: dir.appendingPathComponent("changed"))
+    await m.apply()
+    XCTAssertTrue(m.confirmingSourceChanged)
+    XCTAssertTrue(m.dirty)
+    XCTAssertNil(m.applyMessage)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("apply.log").path))
+    return m
+  }
+  func testSourceChangedCancelKeepsDraftWithoutApply() async throws {
+    let m = try await staleModel()
+    let draft = m.sessions[0].end
+    m.cancelSourceOverride()
+    XCTAssertFalse(m.confirmingSourceChanged)
+    XCTAssertEqual(m.sessions[0].end,draft)
+    XCTAssertTrue(m.dirty)
+  }
+  func testSourceChangedReloadReplacesDraftWithoutApply() async throws {
+    let m = try await staleModel()
+    await m.reloadChangedSource()
+    XCTAssertFalse(m.confirmingSourceChanged)
+    XCTAssertFalse(m.dirty)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("apply.log").path))
+  }
+  func testSourceChangedOverrideSendsExplicitConsent() async throws {
+    let m = try await staleModel()
+    await m.overrideChangedSource()
+    let data = try Data(contentsOf: dir.appendingPathComponent("request.json"))
+    let req = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String:Any])
+    XCTAssertEqual(req["overrideSourceChanges"] as? Bool,true)
+    XCTAssertFalse(m.confirmingSourceChanged)
+    XCTAssertTrue(m.applyMessage?.contains("fixture-backup") == true)
+  }
+  func testOverrideBackupFailureKeepsDraftAndReportsError() async throws {
+    let m = try await staleModel()
+    try Data().write(to: dir.appendingPathComponent("backup-fail"))
+    await m.overrideChangedSource()
+    XCTAssertTrue(m.dirty)
+    XCTAssertFalse(m.confirmingSourceChanged)
+    XCTAssertTrue(m.applyMessage?.contains("Fresh backup failed") == true)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("apply.log").path))
   }
   func testReadCheckReportPrivateAndSanitized() async throws {
     let m = try await model()

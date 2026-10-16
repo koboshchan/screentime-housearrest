@@ -50,6 +50,55 @@ class OriginalTests(unittest.TestCase):
         with patch.object(b.original_local,'inject_local') as writer:
             with self.assertRaisesRegex(b.StorageError,'changed since'): self.engine.apply(request)
             writer.assert_not_called()
+    def test_override_backs_up_current_source_not_old_revision(self):
+        request=self.request()
+        (self.engine.stream/'b').write_bytes(test_backend.segment([
+            (True,150,'com.current.App'),(False,250,'com.current.App')]))
+        current=self.engine.fingerprint()
+        self.assertNotEqual(current,request['revision'])
+        request['overrideSourceChanges']=True
+        result=self.engine.apply(request)
+        b.verify_backup(Path(result['backupPath']),current)
+        import json
+        manifest=json.loads((Path(result['backupPath'])/'manifest.json').read_text())
+        self.assertEqual(manifest['revision'],current)
+        self.assertEqual([(s['bundle'],s['start'],s['end']) for s in self.engine.read()['sessions']],
+                         [('com.new.App',300,400)])
+
+    def test_override_backup_failure_never_writes(self):
+        request=self.request(); request.update(revision='0'*64,overrideSourceChanges=True)
+        before=self.engine.fingerprint()
+        with patch.object(b,'verified_backup',side_effect=b.StorageError('backup failure')), patch.object(b.original_local,'inject_local') as writer:
+            with self.assertRaisesRegex(b.StorageError,'backup failure'): self.engine.apply(request)
+            writer.assert_not_called()
+        self.assertEqual(before,self.engine.fingerprint())
+
+    def test_override_verification_failure_never_writes(self):
+        request=self.request(); request.update(revision='0'*64,overrideSourceChanges=True)
+        with patch.object(b,'verify_backup',side_effect=b.StorageError('verify failed')), patch.object(b.original_local,'inject_local') as writer:
+            with self.assertRaisesRegex(b.StorageError,'verify failed'): self.engine.apply(request)
+            writer.assert_not_called()
+
+    def test_override_requires_explicit_boolean(self):
+        for value in ('true',1,None):
+            request=self.request(); request['overrideSourceChanges']=value
+            with self.subTest(value=value), patch.object(b.original_local,'inject_local') as writer:
+                with self.assertRaisesRegex(b.StorageError,'boolean'): self.engine.apply(request)
+                writer.assert_not_called()
+
+    def test_override_rejects_source_changed_after_verified_backup(self):
+        request=self.request(); request.update(revision='0'*64,overrideSourceChanges=True)
+        real_verify=b.verify_backup
+        def verify_then_change(destination,revision=None):
+            result=real_verify(destination,revision)
+            (self.engine.stream/'b').write_bytes(test_backend.segment([
+                (True,151,'com.race.App'),(False,251,'com.race.App')]))
+            return result
+        with patch.object(b,'verify_backup',side_effect=verify_then_change),patch.object(b.original_local,'inject_local') as writer:
+            with self.assertRaises(b.StorageError) as caught:self.engine.apply(request)
+            self.assertEqual(caught.exception.code,'backup_failed')
+            writer.assert_not_called()
+
     def test_preflight_capacity_no_backup_no_writes(self):
         request=self.request()
         request['sessions']=[dict(id=str(i),bundle='x'*4000,start=i*2,end=i*2+1) for i in range(5)]

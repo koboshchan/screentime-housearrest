@@ -59,8 +59,10 @@ public struct ApplyRequest: Codable, Sendable {
   public var dayStart: Double, dayEnd: Double
   public var sessions: [ApplySession]
   public var revision: String
-  public init(dayStart: Double, dayEnd: Double, sessions: [ApplySession], revision: String) {
-    self.dayStart = dayStart; self.dayEnd = dayEnd; self.sessions = sessions; self.revision = revision }
+  public var overrideSourceChanges: Bool
+  public init(dayStart: Double, dayEnd: Double, sessions: [ApplySession], revision: String, overrideSourceChanges: Bool = false) {
+    self.dayStart = dayStart; self.dayEnd = dayEnd; self.sessions = sessions; self.revision = revision
+    self.overrideSourceChanges = overrideSourceChanges }
 }
 public struct ApplyResult: Codable, Sendable {
   public var backup: String?

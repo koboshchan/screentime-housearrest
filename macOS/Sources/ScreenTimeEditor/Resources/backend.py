@@ -360,8 +360,12 @@ class Engine:
 
     def apply(self, request):
         start, end, sessions = validate_edit(request)
+        override = request.get("overrideSourceChanges", False)
+        require(type(override) is bool, "Override must be a boolean.", "invalid_input")
         snapshot = self.read()
-        require(snapshot["revision"] == request["revision"], "Sources changed since loading; reload before applying.", "stale_revision")
+        require(override or snapshot["revision"] == request["revision"],
+                "Screen Time data changed since you loaded it.", "stale_revision")
+        current_revision = snapshot["revision"]
         api = sys.modules.get(__name__)
         if api is None:
             # importlib fixture loaders need not register their module.
@@ -373,8 +377,10 @@ class Engine:
         no_symlink_parents(root)
         destination = root / str(uuid.uuid4())
         verified_backup(self, destination)
-        verify_backup(destination, request["revision"])
-        require(self.fingerprint() == request["revision"], "Sources changed after backup; reload before applying.", "stale_revision")
+        verify_backup(destination, current_revision)
+        require(self.fingerprint() == current_revision,
+                "Current source changed while preparing its backup; no changes applied.",
+                "backup_failed" if override else "stale_revision")
         try:
             result = original_local.inject_local(self, plan, api)
         except Exception as exc:

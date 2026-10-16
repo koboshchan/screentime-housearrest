@@ -30,6 +30,13 @@ struct ContentView: View {
       Button("Discard Changes", role: .destructive) { model.confirmPendingDay() }
       Button("Keep Editing", role: .cancel) { model.cancelPendingDay() }
     } message: { Text("Switching days or reloading replaces your edits with what is on disk.") }
+    .alert("Screen Time data changed since you loaded it", isPresented: $m.confirmingSourceChanged) {
+      Button("Cancel", role: .cancel) { model.cancelSourceOverride() }
+      Button("Reload") { Task { await model.reloadChangedSource() } }
+      Button("Override", role: .destructive) { Task { await model.overrideChangedSource() } }
+    } message: {
+      Text("Reload to replace your edits with the current data, or override with your edits. Override makes a fresh verified backup of the current data before applying.")
+    }
     .confirmationDialog("Apply changes to Screen Time?", isPresented: $m.confirmingApply) {
       Button("Back Up and Apply") { Task { await model.apply() } }
       Button("Cancel", role: .cancel) {}

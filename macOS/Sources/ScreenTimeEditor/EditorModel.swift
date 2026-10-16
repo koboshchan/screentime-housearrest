@@ -23,6 +23,7 @@ final class EditorModel {
   }
   var applying = false
   var applyMessage: String?
+  var confirmingSourceChanged = false
   var confirmingApply = false
   var confirmingDiscard = false
   private var pendingDate: Date?
@@ -150,11 +151,22 @@ final class EditorModel {
   }
   func discard() { guard !locked else { return }; checkpoint(); sessions = original }
 
-  func apply() async {
+  func cancelSourceOverride() { confirmingSourceChanged = false }
+  func reloadChangedSource() async {
+    confirmingSourceChanged = false
+    applyMessage = nil
+    await load()
+  }
+  func overrideChangedSource() async {
+    confirmingSourceChanged = false
+    await apply(overrideSourceChanges: true)
+  }
+
+  func apply(overrideSourceChanges: Bool = false) async {
     guard let backend, canApply, !locked else { return }
     applying = true; defer { applying = false }
     let req = ApplyRequest(dayStart: dayStart, dayEnd: dayEnd,
-      sessions: sessions.map { ApplySession(id: $0.id, bundle: $0.bundle, start: $0.start, end: $0.end) }, revision: revision)
+      sessions: sessions.map { ApplySession(id: $0.id, bundle: $0.bundle, start: $0.start, end: $0.end) }, revision: revision, overrideSourceChanges: overrideSourceChanges)
     do {
       let r = try await backend.apply(req)
       guard let backup = r.backupLocation else {
@@ -166,6 +178,13 @@ final class EditorModel {
       let st = raw.uppercased().hasPrefix("SUCCESS") ? "applied" : (raw.isEmpty ? "none reported" : raw)
       applyMessage = "Backup saved at \(backup). Status: \(st)." + (needsLogout ? " Log out and back in, or restart, for Screen Time to show the change." : "")
       await load()
-    } catch { applyMessage = "Not applied: \(error.localizedDescription)" }
+    } catch {
+      if (error as? BackendError)?.code == "stale_revision" {
+        confirmingSourceChanged = true
+        applyMessage = nil
+      } else {
+        applyMessage = "Not applied: \(error.localizedDescription)"
+      }
+    }
   }
 }
