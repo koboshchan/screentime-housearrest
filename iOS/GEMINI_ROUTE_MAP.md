@@ -46,3 +46,17 @@ usage stores. Opened Settings manually via shell uiopen; desktop capture showed
 Screen Time Daily Average 1h35m and Updated today at2:34AM matching the device clock.
 This verifies a current Settings refresh, not exact agreement with Lucas's intended
 edited total (no expected total was provided). Reinstalled the verified package.
+
+Native-total correction, October 17
+
+The original Gemini Swift reader, three route architecture and base iOS writer remain intact. The iOS apply route now plans an additional native aggregate-input correction before making the mandatory verified backup. Nothing in this change installs or tests on a device automatically.
+
+ScreenTime.AppUsage now closes the latest still-open pre-day start per bundle at interval start minus 0.001 seconds. Previously closed historical sessions are not closed again. Real closed sessions crossing the interval preserve their outside portions; an unproven cross-segment start/close relationship fails closed instead of guessing. Overlapping segment time ranges and older segments touching the edited interval also fail closed.
+
+Device.Display.Backlight uses a fixed protected native local path. Its verified payload is protobuf field 1 fixed64 Cocoa timestamp and field 2 varint Boolean state. It establishes off at interval start, emits on/off for the union of all selected sessions, removes interval records and preserves outside payloads and SEGB metadata. Empty sessions mean an off interval. A past end boundary restores the original state including an exact-end event. A future end boundary never receives a synthetic on event. Unknown payloads, mismatched clocks, opaque in-interval states and ambiguous multi-segment overlap fail before backup or mutation. Only synthetic host fixture constructors may omit Backlight.
+
+Backlight is now part of source inventory, revision fingerprints, private verified backups under backlight- names, CRC parsing, original ownership/mode inventory and checksum verification. All stream plans are serialized before backup. Current-source revision is checked again after verified backup and every descriptor write compares original bytes, length and link count. Existing caller authentication and fixed-path protocol restrictions remain unchanged. Multiple stores still cannot be committed atomically; failures identify the verified current backup.
+
+The prior refresh-only result demonstrated daemon refresh, not correct totals. Separate caller-owned iOS18 VM experiments found that closing dangling pre-day AppUsage starts corrected native per-app totals, and rewriting Backlight then rebuilding Local DeviceActivity cache corrected the daily total. One controlled 30-minute Preferences edit produced native Preferences and daily totals of 1823 seconds, including 23 seconds of natural use. That evidence motivates this implementation; the packaged integration itself still needs caller-owned VM verification after installation. No general real-device or iOS27 total-correction claim is made.
+
+Host validation covers union/overlap/gaps, empty edits, elapsed and future boundary rules, exact boundaries, dangling open versus previously closed history, crossing sessions, unsupported schema, CRC, multi-segment fail-closed behavior, mandatory Backlight backup metadata and corruption rejection, and a Backlight concurrent-change abort before usage mutation. Gemini reader regression checks remain unchanged.

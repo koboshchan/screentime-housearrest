@@ -332,6 +332,7 @@ public final class NativeStorage {
     let stream: URL
     let backups: URL
     let lockStream: URL?
+    let backlightStream: URL?
     let groupRoot: URL?
     let refreshRunner: ([String]) throws -> Void
     #if HOST_STORAGE_TEST
@@ -344,16 +345,17 @@ public final class NativeStorage {
                   stream:URL(fileURLWithPath:"/private/var/mobile/Library/Biome/streams/restricted/ScreenTime.AppUsage/local"),
                   backups:URL(fileURLWithPath:"/private/var/mobile/Library/ScreenTimeEditor/Backups"),
                   lockStream:URL(fileURLWithPath:"/private/var/db/biome/streams/restricted/Device.ScreenLocked/local"),
+                  backlightStream:URL(fileURLWithPath:"/private/var/db/biome/streams/restricted/Device.Display.Backlight/local"),
                   groupRoot:URL(fileURLWithPath:"/private/var/containers/Shared/SystemGroup"),
                   refreshRunner: NativeStorage.refreshProcesses)
     }
-    private init(fixedDatabase database: URL, stream: URL, backups: URL, lockStream: URL? = nil, groupRoot: URL? = nil, refreshRunner: @escaping ([String]) throws -> Void = { _ in }) {
-        self.database = database; self.stream = stream; self.backups = backups; self.lockStream = lockStream; self.groupRoot = groupRoot; self.refreshRunner = refreshRunner
+    private init(fixedDatabase database: URL, stream: URL, backups: URL, lockStream: URL? = nil, backlightStream: URL? = nil, groupRoot: URL? = nil, refreshRunner: @escaping ([String]) throws -> Void = { _ in }) {
+        self.database = database; self.stream = stream; self.backups = backups; self.lockStream = lockStream; self.backlightStream = backlightStream; self.groupRoot = groupRoot; self.refreshRunner = refreshRunner
     }
     #if HOST_STORAGE_TEST
     // Excluded from shipping app/helper. There is no path input in the wire protocol.
-    convenience init(database: URL, stream: URL, backups: URL, lockStream: URL? = nil, groupRoot: URL? = nil, runner: @escaping ([String]) throws -> Void = { _ in }) {
-        self.init(fixedDatabase:database,stream:stream,backups:backups,lockStream:lockStream,groupRoot:groupRoot,refreshRunner:runner)
+    convenience init(database: URL, stream: URL, backups: URL, lockStream: URL? = nil, backlightStream: URL? = nil, groupRoot: URL? = nil, runner: @escaping ([String]) throws -> Void = { _ in }) {
+        self.init(fixedDatabase:database,stream:stream,backups:backups,lockStream:lockStream,backlightStream:backlightStream,groupRoot:groupRoot,refreshRunner:runner)
     }
     #endif
     func segments() throws -> [URL] {
@@ -407,6 +409,17 @@ public final class NativeStorage {
         for url in result { _ = try Segment.parse(boundedBytes(url)) }
         return result
     }
+    func backlightSegments() throws -> [URL] {
+        // nil is available only through the synthetic host-fixture constructor.
+        guard let backlightStream else { return [] }
+        try rejectLinks(backlightStream)
+        let paths = try FileManager.default.contentsOfDirectory(at:backlightStream,includingPropertiesForKeys:nil)
+            .filter { !$0.lastPathComponent.hasPrefix(".") && !["lock","tombstone"].contains($0.lastPathComponent) }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        try requireStorage(!paths.isEmpty && paths.count <= 10000,"No Backlight segments; nothing applied.","unsupported_schema")
+        for path in paths { _ = try Segment.parse(boundedBytes(path)) }
+        return paths
+    }
     func cacheCandidates() throws -> [URL] {
         guard let groupRoot else { return [] }
         try rejectLinks(groupRoot)
@@ -428,6 +441,7 @@ public final class NativeStorage {
     func inventory() throws -> (files: [(String,URL)], directories: [(String,URL)], absent: [(String,URL)]) {
         var files = try segments().map { ("segment-"+$0.lastPathComponent,$0) }
         files += try lockSegments().map { ("lock-"+$0.lastPathComponent,$0) }
+        files += try backlightSegments().map { ("backlight-"+$0.lastPathComponent,$0) }
         var absent: [(String,URL)] = []
         for suffix in sqliteSuffixes {
             let url = URL(fileURLWithPath:database.path+suffix)
@@ -539,7 +553,7 @@ public final class NativeStorage {
         _ = try db.sessions(start:-978307200,end:252423993599)
         try requireStorage(try fingerprint() == before,"Source changed while reading.","concurrent_change")
         return StorageSnapshot(sessions:sessions,revision:before,warnings:[
-            "Only the latest AppUsage segment is written; older segments remain unchanged.",
+            "The native writer normalizes selected-day usage and display state after a verified backup.",
             "Unmatched or undecodable historical events are not editable sessions.",
             "Device runtime and cross-device aggregation require device verification."
         ])
@@ -603,7 +617,7 @@ public final class NativeStorage {
             let (digest,size) = try hashFile(target)
             try requireStorage(digest == file.digest && size == file.size && file.mode <= 0o7777,"Backup checksum or original metadata mismatch.","backup_failed")
             expectedPaths.insert(file.name)
-            if file.name.hasPrefix("segment-") || file.name.hasPrefix("lock-") { _ = try Segment.parse(boundedBytes(target)) }
+            if file.name.hasPrefix("segment-") || file.name.hasPrefix("lock-") || file.name.hasPrefix("backlight-") { _ = try Segment.parse(boundedBytes(target)) }
         }
         for directory in manifest.directories {
             try requireStorage(directory.name.hasPrefix("cache-") && directory.mode <= 0o7777,"Unsafe directory metadata.","backup_failed")
@@ -636,12 +650,14 @@ public final class NativeStorage {
     func safeBackupName(_ name: String) -> Bool {
         let parts = name.split(separator:"/",omittingEmptySubsequences:false)
         guard !parts.isEmpty, parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else { return false }
-        return name.hasPrefix("segment-") || name.hasPrefix("lock-") || name.hasPrefix("cache-") || sqliteSuffixes.map { "knowledgeC.db"+$0 }.contains(name)
+        return name.hasPrefix("segment-") || name.hasPrefix("lock-") || name.hasPrefix("backlight-") || name.hasPrefix("cache-") || sqliteSuffixes.map { "knowledgeC.db"+$0 }.contains(name)
     }
     func writeExisting(_ path: URL, original: Data, replacement: Data) throws {
         let fd = try regularFD(path,flags:O_RDWR); defer { close(fd) }
         var bytes = Data(count:original.count)
         let count = bytes.withUnsafeMutableBytes { pread(fd,$0.baseAddress,$0.count,0) }
+        var info = stat()
+        try requireStorage(fstat(fd,&info) == 0 && info.st_size == original.count && info.st_nlink == 1,"Store size or link count changed before write.","concurrent_change")
         try requireStorage(count == original.count && bytes == original,"Store changed before write.","concurrent_change")
         try replacement.withUnsafeBytes { raw in
             var offset = 0

@@ -46,15 +46,15 @@ extension NativeStorage {
         }
         let before = try fingerprint()
         try requireStorage(request.overrideSourceChanges || before == request.revision,"Screen Time changed since loading. Reload or explicitly override.","stale_revision")
-        // Original proof pinned segment IDs. Select the newest local segment instead,
-        // deterministically, without accepting device IDs or paths from the caller.
-        let usagePath = try segments().last!
+        // Plan every changed stream before backup or mutation. Preserve the Gemini
+        // writer and add native aggregate-input normalization around it.
+        let usagePlans = try prepareNativeUsage(request)
         guard let lockPath = try lockSegments().last else {
             throw StorageFailure("unsupported_schema","Device.ScreenLocked storage was not found; nothing applied.")
         }
-        let usageOld = try boundedBytes(usagePath), lockOld = try boundedBytes(lockPath)
-        let usageNew = try GeminiIOSRoute.rewrite(usageOld,request:request,locks:false)
+        let lockOld = try boundedBytes(lockPath)
         let lockNew = try GeminiIOSRoute.rewrite(lockOld,request:request,locks:true)
+        let backlightPlans = try prepareBacklight(request)
         do { let db = try KnowledgeDatabase(database); try db.validateGeminiSchema() }
         let cacheBefore = try cacheRevision()
         let id = try backup()
@@ -66,7 +66,9 @@ extension NativeStorage {
         do {
             // Original standalone pre-write UI stop, only after verified backup.
             try refreshRunner(["Preferences","ScreenTimeSettingsAgent"])
-            try writeExisting(usagePath,original:usageOld,replacement:usageNew)
+            for (path,old,new) in usagePlans + backlightPlans {
+                try writeExisting(path,original:old,replacement:new)
+            }
             try writeExisting(lockPath,original:lockOld,replacement:lockNew)
             let db = try KnowledgeDatabase(database,writable:true)
             try db.execute("BEGIN IMMEDIATE")
@@ -82,6 +84,6 @@ extension NativeStorage {
         } catch {
             throw StorageFailure("partial_apply_failed","\(error). Verified current backup \(id). Stores are not one atomic transaction.")
         }
-        return HelperReply(ok:true,code:"refresh_requested",message:"Saved and requested Screen Time daemon refresh. Open Settings to verify updated usage.",details:["backupID":id,"revision":before,"writer":"gemini_ios_full_native","knowledgeC":"full_gemini_rewrite","multiStoreAtomic":"false"])
+        return HelperReply(ok:true,code:"refresh_requested",message:"Saved and requested Screen Time daemon refresh. Open Settings to verify updated usage.",details:["backupID":id,"revision":before,"writer":"gemini_ios_full_native","knowledgeC":"full_gemini_rewrite","aggregateInputs":"usage_and_backlight","multiStoreAtomic":"false"])
     }
 }

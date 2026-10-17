@@ -367,9 +367,36 @@ import Darwin
                 try db.execute("ALTER TABLE ZOBJECT ADD COLUMN \(column) \(column == "ZUUID" ? "TEXT" : "NUMERIC")")
             }
         }
+        let ambiguousRevision = try parityStore.fingerprint()
+        try rejects("shipping route rejects older overlapping segment before mutation") {
+            _ = try parityStore.apply(ApplyRequest(start:0,end:300,sessions:[],revision:ambiguousRevision))
+        }
+        try check(try parityStore.fingerprint() == ambiguousRevision,"ambiguous plan leaves sources unchanged")
+        try FileManager.default.removeItem(at:zeroOlderPath)
+        let backlightDir = parity.appendingPathComponent("backlight")
+        try FileManager.default.createDirectory(at:backlightDir,withIntermediateDirectories:false)
+        let backlightPath = backlightDir.appendingPathComponent("native-display")
+        try privateWrite(Segment(created:-200,size:8192,records:[SegmentRecord(timestamp:-100,payload:NativeAggregates.backlightPayload(-100,true))]).encoded(),backlightPath)
+        let fullStore = NativeStorage(database:parityDB,stream:usageDir,backups:parity.appendingPathComponent("Backups"),lockStream:lockDir,backlightStream:backlightDir,groupRoot:groups,runner:{ calls.append($0) })
+        let preBacklightRace = try boundedBytes(backlightPath)
+        let preUsageRace = try boundedBytes(usagePath)
+        let raceRevision = try fullStore.fingerprint()
+        fullStore.afterBackup = {
+            var changed = try Segment.parse(boundedBytes(backlightPath))
+            changed.reserved = 17
+            let f = open(backlightPath.path,O_WRONLY)
+            let bytes = try changed.encoded()
+            _ = bytes.withUnsafeBytes { pwrite(f,$0.baseAddress,$0.count,0) }; close(f)
+        }
+        try rejects("backlight revision race stops all apply writes") {
+            _ = try fullStore.apply(ApplyRequest(start:0,end:300,sessions:[],revision:raceRevision))
+        }
+        fullStore.afterBackup = nil
+        try check(try boundedBytes(usagePath) == preUsageRace,"backlight race leaves usage untouched")
+        try fullStore.writeExisting(backlightPath,original:boundedBytes(backlightPath),replacement:preBacklightRace)
         let geminiDBBefore = try sqliteState(parityDB)
-        let geminiRevision = try parityStore.fingerprint()
-        let geminiReply = try parityStore.apply(ApplyRequest(start:0,end:300,sessions:[StoredSession(bundle:"com.apple.mobilesafari",start:60,end:180)],revision:geminiRevision))
+        let geminiRevision = try fullStore.fingerprint()
+        let geminiReply = try fullStore.apply(ApplyRequest(start:0,end:300,sessions:[StoredSession(bundle:"com.apple.mobilesafari",start:60,end:180)],revision:geminiRevision))
         try check(geminiReply.ok && geminiReply.details["writer"] == "gemini_ios_full_native","shipping route selected")
         try check(try sqliteState(parityDB) != geminiDBBefore,"full Gemini route rewrites knowledgeC")
         do {
@@ -393,7 +420,22 @@ import Darwin
         }
         try check(try pairUsage(parityStore.events([usagePath])).contains(StoredSession(bundle:"com.apple.mobilesafari",start:60,end:180)),"shipping Gemini route writes requested Safari session")
         try check(calls.last == ["gemini-sync-or-open"],"fixed original sync/open refresh requested")
-        try check(try parityStore.verifyBackup(geminiReply.details["backupID"]!) == geminiRevision,"shipping Gemini route mandatory backup verified")
+        try check(try fullStore.verifyBackup(geminiReply.details["backupID"]!) == geminiRevision,"shipping Gemini route mandatory backup verified")
+        let nativeManifest = try JSONDecoder().decode(BackupManifest.self,from:boundedBytes(parity.appendingPathComponent("Backups").appendingPathComponent(geminiReply.details["backupID"]!).appendingPathComponent("manifest.json")))
+        try check(nativeManifest.files.contains { $0.name == "backlight-native-display" },"backlight independently archived")
+        try check(try fullStore.verifyBackup(geminiReply.details["backupID"]!) == geminiRevision,"backlight archive verified with original checksum and metadata")
+        let archivedBacklight = parity.appendingPathComponent("Backups").appendingPathComponent(geminiReply.details["backupID"]!).appendingPathComponent("backlight-native-display")
+        let privateMode = try fullStore.metadata(archivedBacklight)
+        try check(privateMode.2 == 0o600 && privateMode.0 == geteuid(),"backlight copy private metadata")
+        let archiveBytes = try boundedBytes(archivedBacklight)
+        var damaged = archiveBytes; damaged[40] ^= 1
+        let archiveFD = open(archivedBacklight.path,O_WRONLY)
+        _ = damaged.withUnsafeBytes { pwrite(archiveFD,$0.baseAddress,$0.count,0) }; close(archiveFD)
+        try rejects("backlight archive corruption rejected") { _ = try fullStore.verifyBackup(geminiReply.details["backupID"]!) }
+        let restoreFD = open(archivedBacklight.path,O_WRONLY)
+        _ = archiveBytes.withUnsafeBytes { pwrite(restoreFD,$0.baseAddress,$0.count,0) }; close(restoreFD)
+        let nativeBacklight = try Segment.parse(boundedBytes(backlightPath))
+        try check(nativeBacklight.records.contains { $0.timestamp == 60 && (try? NativeAggregates.backlightState($0)) == true },"native backlight session on")
         _ = try parityStore.fingerprint() // Missing cleared Local roots are valid absent entries.
         let response = try StorageProtocol.handle(HelperRequest(op:.read),storage:store)
         try check(response.ok && response.details["snapshot"] != nil,"read protocol")
