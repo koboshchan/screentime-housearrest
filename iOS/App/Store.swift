@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 @MainActor
 final class Store: ObservableObject {
@@ -109,6 +112,12 @@ final class Store: ObservableObject {
                 if a.ok {
                     self.status = a.message
                     self.reload()
+                    #if os(iOS)
+                    // Open from the signed UI process, never from the root helper.
+                    if let url = URL(string: "prefs:root=SCREEN_TIME") {
+                        UIApplication.shared.open(url)
+                    }
+                    #endif
                 } else if a.code == "stale_revision" && !override {
                     self.showStale = true
                 } else {

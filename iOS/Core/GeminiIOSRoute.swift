@@ -26,28 +26,15 @@ enum GeminiIOSRoute {
         return try segment.encoded()
     }
 
-    /// Same fixed sync-then-open fallback as Gemini. No shell, SSH, Python or
-    /// caller-selected executable/arguments. Missing jailbreak utilities fail explicitly.
+    /// The unhooked privileged helper sees the stock root filesystem, not the
+    /// jailbreak shell's remapped /usr/bin. Refresh by exact kernel process names;
+    /// no executable lookup, shell, environment injection or cache deletion.
+    static let refreshTargets = ["Preferences", "ScreenTimeSettingsAgent",
+                                 "ScreenTimeAgent", "UsageTrackingAgent", "biomed"]
     static func refresh() throws {
-        func run(_ path: String, _ arguments: [String]) -> Bool {
-            var pid: pid_t = 0
-            let strings = ([path]+arguments).map { strdup($0) }
-            defer { for string in strings { free(string) } }
-            var argv = strings + [nil]
-            let rc = argv.withUnsafeMutableBufferPointer {
-                posix_spawn(&pid,path,nil,nil,$0.baseAddress!,environ)
-            }
-            guard rc == 0 else { return false }
-            var status: Int32 = 0
-            while waitpid(pid,&status,0) < 0 {
-                if errno != EINTR { return false }
-            }
-            return status == 0
-        }
-        if run("/usr/bin/screentime-cli",["sync"]) { return }
-        try requireStorage(run("/usr/bin/uiopen",["--url","prefs:root=SCREEN_TIME"]),
-                           "Usage saved, but neither fixed Screen Time refresh utility succeeded. Open Settings manually; runtime verification is required.","refresh_failed")
+        try NativeStorage.refreshProcesses(refreshTargets)
     }
+
 }
 
 extension NativeStorage {
@@ -95,6 +82,6 @@ extension NativeStorage {
         } catch {
             throw StorageFailure("partial_apply_failed","\(error). Verified current backup \(id). Stores are not one atomic transaction.")
         }
-        return HelperReply(ok:true,code:"refresh_requested",message:"Saved using the original Gemini iOS route. Device runtime verification remains required.",details:["backupID":id,"revision":before,"writer":"gemini_ios_full_native","knowledgeC":"full_gemini_rewrite","multiStoreAtomic":"false"])
+        return HelperReply(ok:true,code:"refresh_requested",message:"Saved and requested Screen Time daemon refresh. Open Settings to verify updated usage.",details:["backupID":id,"revision":before,"writer":"gemini_ios_full_native","knowledgeC":"full_gemini_rewrite","multiStoreAtomic":"false"])
     }
 }

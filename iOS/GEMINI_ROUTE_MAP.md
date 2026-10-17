@@ -24,3 +24,25 @@ Every apply, including overrides, makes and independently verifies a fresh backu
 bash iOS/build.sh compiles actual arm64 iOS app/helper and runs synthetic model/IPC/auth/storage/Gemini writer/reader checks. python3 iOS/package.py builds/signs and verifies RootHide archive locally. Host fixtures use temporary synthetic files only.
 
 No install, launch, push or live device writes. RootHide root launch, storage visibility/permissions, device SEGB/schema compatibility, fixed refresh utilities and Settings aggregation remain runtime untested. Missing full original database columns fails closed with a precise schema error rather than writing an incomplete replacement. Ready for controlled device testing only after package verification, not claimed device-proven.
+
+## Vphone iOS18 refresh correction
+The optional screentime-cli is absent. More importantly, the signed native helper
+sees the stock root filesystem rather than the jailbreak shell's remapped root:
+a signed, sanitized native probe returned access ENOENT and posix_spawn errno2
+for /usr/bin/uiopen, while the shell's uiopen succeeded. Do not inject jailbreak
+environment variables into the privileged helper to make a utility resolvable.
+
+The final refresh now uses the existing exact-name kernel process signaling for
+Preferences, ScreenTimeSettingsAgent, ScreenTimeAgent, UsageTrackingAgent and
+biomed. Missing optional processes are harmless; actual signaling errors fail.
+No additional cache paths or deletions were added. The successful UI response
+opens the Screen Time preferences URL from the app process, not the root helper.
+Original verified backup, data rewrite, cache-change check and Local deletion
+remain unchanged.
+
+On pcc-research-03-clone iOS18.6.2, ran a signed refresh-only harness containing
+the same production Core sources. It succeeded without calling Apply or writing
+usage stores. Opened Settings manually via shell uiopen; desktop capture showed
+Screen Time Daily Average 1h35m and Updated today at2:34AM matching the device clock.
+This verifies a current Settings refresh, not exact agreement with Lucas's intended
+edited total (no expected total was provided). Reinstalled the verified package.
