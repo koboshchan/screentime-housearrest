@@ -34,7 +34,10 @@ static int trusted_path(const char *path) {
 int ste_authorize_caller(void) {
     // Do not consume caller-controlled environment in privileged storage operations.
     // dyld/setuid loader protection is still a target-runtime prerequisite.
-    *_NSGetEnviron() = NULL;
+    // Darwin setenv traverses environ and requires a valid null-terminated
+    // vector, even when empty. A NULL vector crashes before caller validation.
+    static char *empty_environment[] = { NULL };
+    *_NSGetEnviron() = empty_environment;
     if (setenv("PATH", "/usr/bin:/bin", 1) || setenv("HOME", "/var/empty", 1) ||
         setenv("TMPDIR", "/var/empty", 1) || setenv("LANG", "C", 1)) return 0;
     umask(0077);
