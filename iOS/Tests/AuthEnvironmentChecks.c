@@ -2,6 +2,12 @@
 #include "../Helper/Auth.c"
 #include <assert.h>
 int main(void) {
+    assert(trusted_owner(S_IFDIR | 0755, 0, 33));
+    assert(trusted_owner(S_IFDIR | 0755, 33, 33));
+    assert(!trusted_owner(S_IFDIR | 0755, 501, 33));
+    assert(!trusted_owner(S_IFREG | 0755, 33, 33));
+    assert(trusted_owner(S_IFREG | 0755, 0, 33));
+    assert(!trusted_owner(S_IFDIR | 0755, 33, (uid_t)-1));
     assert(setenv("STE_UNTRUSTED_ENVIRONMENT", "must disappear", 1) == 0);
     assert(ste_authorize_caller() == 0);
     assert(*_NSGetEnviron() != NULL);

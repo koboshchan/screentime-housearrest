@@ -11,21 +11,29 @@
 #include <limits.h>
 #include <crt_externs.h>
 #include <grp.h>
+#include <pwd.h>
 #include <mach-o/dyld.h>
 extern int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
 extern int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
 #ifndef STE_APP_CDHASH
 #define STE_APP_CDHASH ""
 #endif
+static int trusted_owner(mode_t mode, uid_t owner, uid_t installd) {
+    // Only ancestor directories may use the system installer account.
+    // The app executable and privileged helper remain root-owned.
+    return owner == 0 || (S_ISDIR(mode) && installd != (uid_t)-1 && owner == installd);
+}
 static int trusted_path(const char *path) {
     char copy[PATH_MAX];
     if (strlcpy(copy,path,sizeof(copy)) >= sizeof(copy) || copy[0] != '/') return 0;
+    struct passwd *installer = getpwnam("_installd");
+    uid_t installd = installer ? installer->pw_uid : (uid_t)-1;
     struct stat st;
     // realpath is called before this; inspect all resolved ancestors.
     for (char *p = copy + 1;;p++) {
         if (*p != '/' && *p != 0) continue;
         char saved = *p; *p = 0;
-        if (lstat(copy,&st) || S_ISLNK(st.st_mode) || st.st_uid != 0 || (st.st_mode & 0022)) return 0;
+        if (lstat(copy,&st) || S_ISLNK(st.st_mode) || !trusted_owner(st.st_mode, st.st_uid, installd) || (st.st_mode & 0022)) return 0;
         *p = saved;
         if (!saved) break;
     }
