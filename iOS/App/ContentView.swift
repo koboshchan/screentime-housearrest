@@ -22,7 +22,6 @@ struct ContentView: View {
                         }.onDelete { for i in $0 { store.delete(store.sessions[i].id) } }
                     }
                 }
-                if let b = store.blocked { Section { Text(b).foregroundColor(.orange) } }
                 if let e = store.error { Section { Text(e).foregroundColor(.red) } }
                 if let m = store.status { Section { Text(m) } }
                 if !store.warnings.isEmpty {
@@ -38,6 +37,12 @@ struct ContentView: View {
             .sheet(isPresented: $showingAdd) { NavigationStack { SessionEditor(store: store, session: nil) } }
         }
         .navigationViewStyle(StackNavigationViewStyle())
+        .alert("Override uneditable sessions?", isPresented: $store.showLossyConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Override", role: .destructive) { store.confirmLossyApply() }
+        } message: {
+            Text(store.lossyMessage)
+        }
         .alert("Screen Time changed", isPresented: $store.showStale) {
             Button("Cancel", role: .cancel) {}
             Button("Reload") { store.reload() }

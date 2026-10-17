@@ -11,8 +11,15 @@ final class Store: ObservableObject {
     @Published var busy = false
     @Published var loaded = false
     @Published var showStale = false
-    /// Why Apply is disabled even though the helper is ready (nil when fine).
-    @Published var blocked: String?
+    @Published var showLossyConfirmation = false
+    private var pendingSourceOverride = false
+    var uneditableCount: Int { sessions.filter { (try? SessionRules.validate($0)) == nil }.count }
+    var lossyMessage: String {
+        "\(uneditableCount) session(s) cannot be represented by this editor and will be omitted when today is rewritten. Their recorded usage will be lost or changed. A verified backup is made first. Continue?"
+    }
+    func confirmLossyApply() {
+        apply(override: pendingSourceOverride, allowLossy: true)
+    }
 
     private var revision: String?
     private var dayStart: TimeInterval = 0   // seconds since 2001-01-01 UTC, start of the edited local day
@@ -22,7 +29,7 @@ final class Store: ObservableObject {
         if loaded { return "Showing today's usage as stored on this device. Nothing changes until you tap Apply, and a verified backup is made first." }
         return "Existing usage has not been read. Composed sessions stay in memory only; closing the app discards them."
     }
-    var canApply: Bool { capability.canApply && loaded && revision != nil && blocked == nil && !busy && !sessions.isEmpty }
+    var canApply: Bool { capability.canApply && loaded && revision != nil && !busy && !sessions.isEmpty }
 
     func refreshCapability() {
         busy = true
@@ -56,18 +63,15 @@ final class Store: ObservableObject {
 
     private func install(_ snap: StorageSnapshot, dayStart ds: TimeInterval, dayEnd de: TimeInterval) {
         var out: [UsageSession] = []
-        var uneditable = 0
         for s in snap.sessions where s.end > ds && s.start < de {
             let u = UsageSession(bundleID: s.bundle, start: max(s.start, ds) - ds, end: min(s.end, de) - ds)
             // Apply rewrites the whole day, so sessions the editor cannot represent must not be silently dropped.
-            if (try? SessionRules.validate(u)) == nil { uneditable += 1 }
             out.append(u)
         }
         out.sort { $0.start < $1.start }
         sessions = out; dayStart = ds; dayEnd = de; revision = snap.revision; loaded = true
         selected = nil; error = nil
         warnings = snap.warnings
-        blocked = uneditable == 0 ? nil : "\(uneditable) stored session(s) today are shorter than a minute, past midnight or have an unusual bundle identifier, so the editor cannot rewrite today without losing them. Apply is disabled."
     }
 
     func add(bundleID: String, start: TimeInterval, end: TimeInterval) {
@@ -84,11 +88,17 @@ final class Store: ObservableObject {
 
     /// The helper takes its own fresh, verified backup of the CURRENT sources before every write,
     /// including an override, and refuses to write if it cannot.
-    func apply(override: Bool = false) {
+    func apply(override: Bool = false, allowLossy: Bool = false) {
         guard canApply, let rev = revision else { error = "Apply is unavailable: \(capability.summary)"; return }
-        for s in sessions { do { try SessionRules.validate(s) } catch { self.error = "\(error)"; return } }
+        if uneditableCount > 0 && !allowLossy {
+            pendingSourceOverride = override
+            showLossyConfirmation = true
+            return
+        }
+        let editable = sessions.filter { (try? SessionRules.validate($0)) != nil }
+        for s in editable { do { try SessionRules.validate(s) } catch { self.error = "\(error)"; return } }
         let edit = ApplyRequest(start: dayStart, end: dayEnd,
-            sessions: sessions.map { StoredSession(bundle: $0.bundleID, start: dayStart + $0.start, end: dayStart + $0.end) },
+            sessions: editable.map { StoredSession(bundle: $0.bundleID, start: dayStart + $0.start, end: dayStart + $0.end) },
             revision: rev, overrideSourceChanges: override)
         busy = true; error = nil; status = nil
         Task.detached {
