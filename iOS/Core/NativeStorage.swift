@@ -47,7 +47,12 @@ final class PrivateSQLiteSnapshot {
     let folder: URL
     let database: URL
     init(_ source: URL) throws {
-        folder = URL(fileURLWithPath:"/private/tmp").appendingPathComponent("ste-sqlite-"+UUID().uuidString)
+        // /tmp is also available inside RootHide bootstrap roots; /private/tmp is not.
+        guard let temporaryRoot = realpath("/tmp", nil) else {
+            throw StorageFailure("read_failed", "Cannot resolve temporary storage directory.")
+        }
+        defer { free(temporaryRoot) }
+        folder = URL(fileURLWithPath:String(cString:temporaryRoot)).appendingPathComponent("ste-sqlite-"+UUID().uuidString)
         database = folder.appendingPathComponent("knowledgeC.db")
         try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700,.ownerAccountID:geteuid(),.groupOwnerAccountID:getegid()])
         do {
