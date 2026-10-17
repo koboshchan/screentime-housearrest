@@ -35,7 +35,8 @@ enum NativeAggregates {
         return data[10] == 1
     }
     static func backlight(_ original: Data, history: [SegmentRecord], request: ApplyRequest,
-                          now: Double = Date().timeIntervalSinceReferenceDate) throws -> Data {
+                          now: Double = Date().timeIntervalSinceReferenceDate,
+                          preserved: [StoredSession] = []) throws -> Data {
         var segment = try Segment.parse(original)
         let active = ordered(history.filter { $0.state == 1 })
         for row in active { _ = try backlightState(row) }
@@ -58,8 +59,61 @@ enum NativeAggregates {
         if request.end <= now, let boundary {
             segment.records.append(SegmentRecord(timestamp:request.end,payload:try backlightPayload(request.end,backlightState(boundary))))
         }
+        // Overlay only proven preserved usage, leaving all other outside state
+        // and opaque records byte-for-byte intact. Restore the original state
+        // at each closing boundary, not a guessed off state.
+        for (a,b) in union(preserved) {
+            try requireStorage(a < b && (b <= request.start || a >= request.end),
+                               "Preserved coverage intersects edit; nothing applied.","unsupported_schema")
+            try requireStorage(!history.contains { $0.state != 1 && $0.timestamp >= a && $0.timestamp <= b },
+                               "Opaque Backlight event intersects preserved usage; nothing applied.","unsupported_schema")
+            guard let boundary = active.last(where: { $0.timestamp <= b }) else {
+                throw StorageFailure("unsupported_schema","Unknown preserved Backlight boundary; nothing applied.")
+            }
+            segment.records.removeAll { $0.state == 1 && $0.timestamp >= a && $0.timestamp < b }
+            segment.records.append(SegmentRecord(timestamp:a,payload:try backlightPayload(a,true)))
+            // At the edit start the synthetic baseline owns the boundary.
+            // Restoring a preceding natural on-state there would erase a gap.
+            if b != request.start {
+                segment.records.append(SegmentRecord(timestamp:b,payload:try backlightPayload(b,backlightState(boundary))))
+            }
+        }
         segment.records = ordered(segment.records)
         return try segment.encoded()
+    }
+    /// Only unambiguous closed pairs establish natural display coverage.
+    /// An orphan stop is retained by the usage writer, never reconstructed here.
+    static func preservedUsage(_ records: [SegmentRecord], request: ApplyRequest,
+                               calendar: Calendar = .current) throws -> [StoredSession] {
+        let date = Date(timeIntervalSinceReferenceDate:request.start)
+        let dayStart = calendar.startOfDay(for:date)
+        guard let dayEnd = calendar.date(byAdding:.day,value:1,to:dayStart) else {
+            throw StorageFailure("unsupported_schema","Unknown selected day; nothing applied.")
+        }
+        let lo = dayStart.timeIntervalSinceReferenceDate, hi = dayEnd.timeIntervalSinceReferenceDate
+        try requireStorage(request.end <= hi,"Edit crosses selected day; nothing applied.","unsupported_schema")
+        var open: [String:Double] = [:], result: [StoredSession] = []
+        for row in ordered(records) {
+            guard row.state == 1, let event = try? AppUsageProto.decode(row.payload) else {
+                try requireStorage(row.timestamp < lo || row.timestamp >= hi,
+                                   "Unknown selected-day AppUsage event; nothing applied.","unsupported_schema")
+                continue
+            }
+            if event.opening {
+                if let prior = open[event.bundle] {
+                    try requireStorage(row.timestamp < lo || prior >= hi,
+                                       "Ambiguous selected-day AppUsage starts; nothing applied.","unsupported_schema")
+                }
+                open[event.bundle] = row.timestamp
+            } else if let start = open.removeValue(forKey:event.bundle) {
+                for (a,b) in [(max(start,lo),min(row.timestamp,request.start)),
+                              (max(start,request.end),min(row.timestamp,hi))] where a < b {
+                    result.append(StoredSession(bundle:event.bundle,start:a,end:b))
+                }
+            }
+        }
+        // Unclosed sessions do not establish a known end, so add no coverage.
+        return result
     }
     static func usage(_ original: Data, request: ApplyRequest) throws -> Data {
         let source = try Segment.parse(original)
@@ -148,6 +202,10 @@ extension NativeStorage {
             }
         }
         let old = try boundedBytes(path)
-        return [(path,old,try NativeAggregates.backlight(old,history:history,request:request))]
+        let usagePaths = try segments()
+        try validateOlderUsage(usagePaths,request)
+        let usageRows = try usagePaths.flatMap { try Segment.parse(boundedBytes($0)).records }
+        let preserved = try NativeAggregates.preservedUsage(usageRows,request:request)
+        return [(path,old,try NativeAggregates.backlight(old,history:history,request:request,preserved:preserved))]
     }
 }

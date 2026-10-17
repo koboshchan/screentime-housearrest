@@ -81,8 +81,63 @@ import Darwin
         try privateWrite(original,backA); try privateWrite(original,backB)
         try rejects("overlapping backlight segments fail before backup") { _ = try store.prepareBacklight(empty) }
         try FileManager.default.removeItem(at:backA)
+        try rejects("unknown preserved history boundary fails closed") { _ = try store.prepareBacklight(empty) }
+        try FileManager.default.removeItem(at:a)
+        try privateWrite(usage([]),a)
         try check(try store.prepareBacklight(empty).count == 1,"single backlight plan")
 
+        var cal = Calendar(identifier:.gregorian)
+        cal.timeZone = TimeZone(identifier:"America/Vancouver")!
+        let day = 813913200.0, dayEnd = 813999600.0, hour = 813924000.0
+        let partial = ApplyRequest(start:day,end:813922166,sessions:[
+            StoredSession(bundle:"com.apple.mobilesafari",start:day+1800,end:day+3600),
+            StoredSession(bundle:"com.apple.Preferences",start:day+4320,end:day+7920),
+            StoredSession(bundle:"com.kobosh.screentimeeditor",start:813921179.610130,end:813922165.994653)],revision:revision)
+        let naturals = [
+            UsageEvent(opening:false,time:813923384.336326,bundle:"com.apple.Preferences"),
+            UsageEvent(opening:true,time:813923384.491764,bundle:"com.apple.Preferences"),
+            UsageEvent(opening:false,time:813923406.971060,bundle:"com.apple.Preferences"),
+            UsageEvent(opening:true,time:813923407.112081,bundle:"com.apple.Preferences"),
+            UsageEvent(opening:false,time:813924247.819759,bundle:"com.apple.Preferences")]
+        let naturalData = try usage(naturals)
+        let naturalRows = try Segment.parse(naturalData).records
+        let preserved = try NativeAggregates.preservedUsage(naturalRows,request:partial,calendar:cal)
+        try check(preserved.count == 2,"orphan stop never invented")
+        let fragment = preserved.reduce(0.0) { $0 + max(0,min($1.end,hour)-$1.start) }
+        try check(abs(fragment-615.3672150373459) < 0.000001,"actual 22.479296 plus 592.887919 closed-hour discrepancy")
+        let off = SegmentRecord(timestamp:day-10,payload:try NativeAggregates.backlightPayload(day-10,false))
+        let oldOn = SegmentRecord(timestamp:day+13000,flag:77,payload:try NativeAggregates.backlightPayload(day+13000,true))
+        let oldOff = SegmentRecord(timestamp:day+14000,payload:try NativeAggregates.backlightPayload(day+14000,false))
+        let nextDay = SegmentRecord(timestamp:dayEnd+1,payload:try NativeAggregates.backlightPayload(dayEnd+1,true))
+        let opaque = SegmentRecord(state:2,timestamp:dayEnd+2,flag:91,payload:Data([123]))
+        let display = [off,oldOn,oldOff,nextDay,opaque]
+        let displayData = try Segment(created:1,flags:23,reserved:456,size:8192,records:display).encoded()
+        let corrected = try Segment.parse(NativeAggregates.backlight(displayData,history:display,request:partial,now:hour+1000,preserved:preserved))
+        func state(_ time: Double) throws -> Bool {
+            try NativeAggregates.backlightState(corrected.records.last { $0.state == 1 && $0.timestamp <= time }!)
+        }
+        try check(try state(813923390),"first natural gains coverage")
+        try check(try !state(813923407),"real 141ms gap retained")
+        try check(try state(hour-1),"second natural gains closed-hour coverage")
+        try check(try !state(813924248),"original off state restored")
+        try check(try state(day+13500),"existing unrelated on coverage preserved")
+        try check(corrected.records.contains { $0.timestamp == nextDay.timestamp && $0.payload == nextDay.payload },"outside-day state bytes retained")
+        try check(corrected.records.contains { $0.state == 2 && $0.payload == opaque.payload },"outside opaque event retained")
+        try check(try Segment.parse(naturalData).records.map(\.payload) == naturalRows.map(\.payload),"natural AppUsage bytes unchanged")
+        let crossingDay = try usage([UsageEvent(opening:true,time:dayEnd-10,bundle:"com.example.end"),UsageEvent(opening:false,time:dayEnd+10,bundle:"com.example.end")])
+        let clipped = try NativeAggregates.preservedUsage(Segment.parse(crossingDay).records,request:partial,calendar:cal)
+        try check(clipped == [StoredSession(bundle:"com.example.end",start:dayEnd-10,end:dayEnd)],"selected day clips exactly at 813999600")
+        let ambiguous = try usage([UsageEvent(opening:true,time:day+10,bundle:"com.example.a"),UsageEvent(opening:true,time:day+20,bundle:"com.example.a"),UsageEvent(opening:false,time:day+30,bundle:"com.example.a")])
+        try rejects("duplicate natural starts fail closed") { _ = try NativeAggregates.preservedUsage(Segment.parse(ambiguous).records,request:partial,calendar:cal) }
+        let openOnly = try usage([UsageEvent(opening:true,time:hour,bundle:"com.example.open")])
+        try check(try NativeAggregates.preservedUsage(Segment.parse(openOnly).records,request:partial,calendar:cal).isEmpty,"ongoing usage never assigned invented end")
+        let unknown = SegmentRecord(state:2,timestamp:813923390,payload:Data([1]))
+        try rejects("opaque inside added coverage fails closed") { _ = try NativeAggregates.backlight(displayData,history:display+[unknown],request:partial,now:hour+1000,preserved:preserved) }
+
+        let before = [StoredSession(bundle:"com.example.before",start:80,end:100)]
+        let beforeData = try NativeAggregates.backlight(onOriginal,history:onHistory,request:empty,now:500,preserved:before)
+        let beforeRows = try Segment.parse(beforeData).records
+        try check(try !NativeAggregates.backlightState(beforeRows.last { $0.timestamp <= 110 }!),"preserved pre-edit natural does not override edit baseline")
         print("PASS native aggregate \(count) checks; synthetic streams only")
     }
 }
