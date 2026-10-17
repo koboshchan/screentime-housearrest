@@ -37,6 +37,8 @@ xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -O -D HOST_STOR
 "$OUT/gemini-route-checks"
 xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -O -D HOST_STORAGE_TEST -parse-as-library Core/*.swift Tests/NativeAggregateChecks.swift -framework CryptoKit -lsqlite3 -lz -o "$OUT/native-aggregate-checks"
 "$OUT/native-aggregate-checks"
+xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -O -D HOST_STORAGE_TEST -parse-as-library Core/*.swift Tests/GeminiAllocationChecks.swift -framework CryptoKit -lsqlite3 -lz -o "$OUT/gemini-allocation-checks"
+"$OUT/gemini-allocation-checks"
 # Positive and corruption checks on already signed artifacts, if available.
 # This does not rebuild, alter, install or run any package.
 if [[ -f .theos/_/Applications/ScreenTimeEditor.app/ScreenTimeEditor ]]; then

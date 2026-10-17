@@ -363,6 +363,7 @@ import Darwin
         // Full standalone Gemini route: both Biome streams plus knowledgeC rewrite.
         do {
             let db = try KnowledgeDatabase(parityDB,writable:true)
+            try db.execute("ALTER TABLE Z_PRIMARYKEY ADD COLUMN Z_SUPER INTEGER DEFAULT 1; ALTER TABLE Z_PRIMARYKEY ADD COLUMN Z_MAX INTEGER DEFAULT 0; INSERT INTO Z_PRIMARYKEY (Z_ENT,Z_NAME,Z_SUPER,Z_MAX) VALUES(1,'Object',0,0)")
             for column in KnowledgeDatabase.geminiColumns where column != "ZVALUEDOUBLE" {
                 try db.execute("ALTER TABLE ZOBJECT ADD COLUMN \(column) \(column == "ZUUID" ? "TEXT" : "NUMERIC")")
             }
