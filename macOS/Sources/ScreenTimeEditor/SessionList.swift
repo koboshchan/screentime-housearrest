@@ -69,14 +69,23 @@ struct AddSheet: View {
   @Environment(EditorModel.self) private var model
   @Environment(\.dismiss) private var dismiss
   @State private var bundle = ""
+  @State private var showingPicker = false
   @State private var start = Date()
   @State private var minutes = 15
   var body: some View {
     Form {
-      TextField("App bundle ID", text: $bundle, prompt: Text("com.apple.Safari"))
+      Button { showingPicker = true } label: {
+        HStack {
+          if bundle.isEmpty { Text("Choose app") }
+          else { AppIdentityLabel(bundleID: bundle) }
+          Spacer()
+          Image(systemName: "chevron.up.chevron.down").foregroundStyle(.secondary)
+        }
+      }
       DatePicker("Start", selection: $start)
       Stepper("Length \(minutes) min", value: $minutes, in: 1...720, step: 5)
     }
+    .sheet(isPresented: $showingPicker) { InstalledAppPicker(selection: $bundle) }
     .formStyle(.grouped).frame(width: 380).padding(.bottom, 8)
     .toolbar {
       ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

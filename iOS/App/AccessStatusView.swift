@@ -4,9 +4,10 @@ import SwiftUI
 struct AccessStatusView: View {
     let summary: String
     let note: String
+    var available: Bool = false
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Live access unavailable").font(.headline)
+            Text(available ? "Live access ready" : "Live access unavailable").font(.headline)
             Text(summary.replacingOccurrences(of: "Live access unavailable. ", with: "")).foregroundColor(.primary)
             Text(note).font(.subheadline).foregroundColor(.primary)
         }

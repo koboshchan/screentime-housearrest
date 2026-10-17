@@ -8,16 +8,16 @@ struct ContentView: View {
         NavigationView {
             List {
                 Section {
-                    AccessStatusView(summary: store.capability.summary, note: store.loadNote)
+                    AccessStatusView(summary: store.capability.summary, note: store.loadNote, available: store.capability.canApply)
                 }
                 if !store.sessions.isEmpty {
                     Section(header: Text("Timeline")) {
-                        TimelineView(store: store).frame(height: 120).listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+                        TimelineView(store: store).frame(height: 230).listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
                     }
                     Section(header: Text("Sessions"), footer: Text("Total \(formatDuration(SessionRules.rawTotal(store.sessions))), screen on \(formatDuration(SessionRules.screenOnTotal(store.sessions)))")) {
                         ForEach(store.sessions) { s in
                             NavigationLink(destination: SessionEditor(store: store, session: s)) {
-                                HStack { Text(s.bundleID).lineLimit(1); Spacer(); Text("\(formatHM(s.start)) to \(formatHM(s.end))").foregroundColor(.secondary).monospacedDigit() }
+                                HStack { AppLabel(bundleID: s.bundleID); Spacer(); Text("\(formatHM(s.start)) to \(formatHM(s.end))").foregroundColor(.secondary).monospacedDigit() }
                             }
                         }.onDelete { for i in $0 { store.delete(store.sessions[i].id) } }
                     }
@@ -35,7 +35,7 @@ struct ContentView: View {
             }
             .navigationTitle("Usage")
             .toolbar { Button { showingAdd = true } label: { Image(systemName: "plus") } }
-            .sheet(isPresented: $showingAdd) { SessionEditor(store: store, session: nil) }
+            .sheet(isPresented: $showingAdd) { NavigationStack { SessionEditor(store: store, session: nil) } }
         }
         .navigationViewStyle(StackNavigationViewStyle())
         .alert("Screen Time changed", isPresented: $store.showStale) {
@@ -54,6 +54,7 @@ struct SessionEditor: View {
     var session: UsageSession?
     @Environment(\.presentationMode) private var presentation
     @State private var bundleID = ""
+    @State private var showingPicker = false
     @State private var start = Date(timeIntervalSinceReferenceDate: 0)
     @State private var end = Date(timeIntervalSinceReferenceDate: 3600)
 
@@ -65,8 +66,15 @@ struct SessionEditor: View {
 
     var body: some View {
         Form {
-            Section(header: Text("App bundle identifier")) {
-                TextField("com.apple.mobilesafari", text: $bundleID).autocapitalization(.none).disableAutocorrection(true)
+            Section(header: Text("App")) {
+                Button { showingPicker = true } label: {
+                    HStack {
+                        if bundleID.isEmpty { Text("Choose app") }
+                        else { AppLabel(bundleID: bundleID) }
+                        Spacer()
+                        Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                    }
+                }
             }
             Section {
                 DatePicker("Start", selection: $start, displayedComponents: .hourAndMinute)
@@ -74,12 +82,13 @@ struct SessionEditor: View {
             }
             if let e = store.error { Text(e).foregroundColor(.red) }
         }
+        .sheet(isPresented: $showingPicker) { InstalledAppPicker(selection: $bundleID) }
         .navigationBarTitle(session == nil ? "New session" : "Session", displayMode: .inline)
         .navigationBarItems(trailing: Button("Save") {
             if var s = session { s.bundleID = bundleID; s.start = secs(start); s.end = secs(end); store.update(s) }
             else { store.add(bundleID: bundleID, start: secs(start), end: secs(end)) }
             if store.error == nil { presentation.wrappedValue.dismiss() }
-        })
+        }.disabled(bundleID.isEmpty))
         .onAppear {
             store.error = nil
             if let s = session { bundleID = s.bundleID; start = date(s.start); end = date(s.end) }
@@ -92,19 +101,24 @@ struct SessionEditor: View {
 struct TimelineView: View {
     @ObservedObject var store: Store
     var body: some View {
-        GeometryReader { geo in
-            let w = geo.size.width
-            let lanes = laneAssignments(store.sessions)
+        let lanes = laneAssignments(store.sessions)
+        let laneCount = (lanes.values.max() ?? 0) + 1
+        ScrollView([.horizontal, .vertical]) {
             ZStack(alignment: .topLeading) {
-                ForEach([0, 6, 12, 18, 24], id: \.self) { h in
-                    Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: 1).offset(x: w * CGFloat(h) / 24)
-                    Text("\(h)").font(.caption2).foregroundColor(.secondary).offset(x: min(w * CGFloat(h) / 24 + 2, w - 14), y: 100)
+                ForEach([0, 3, 6, 9, 12, 15, 18, 21, 24], id: \.self) { h in
+                    Rectangle().fill(Color.secondary.opacity(0.18))
+                        .frame(width: 1, height: CGFloat(laneCount) * 44)
+                        .offset(x: 60 * CGFloat(h), y: 24)
+                    Text("\(h):00").font(.caption2).foregroundColor(.secondary)
+                        .offset(x: min(60 * CGFloat(h) + 2, 1408), y: 0)
                 }
                 ForEach(store.sessions) { s in
-                    Bar(store: store, s: s, width: w, lane: lanes[s.id] ?? 0)
+                    Bar(store: store, s: s, width: 1440, lane: lanes[s.id] ?? 0)
                 }
             }
+            .frame(width: 1440, height: max(190, CGFloat(laneCount) * 44 + 24), alignment: .topLeading)
         }
+        .defaultScrollAnchor(.topLeading)
     }
     func laneAssignments(_ ss: [UsageSession]) -> [UUID: Int] {
         var ends: [TimeInterval] = []; var out: [UUID: Int] = [:]
@@ -119,15 +133,28 @@ struct TimelineView: View {
 struct Bar: View {
     @ObservedObject var store: Store
     let s: UsageSession; let width: CGFloat; let lane: Int
+    private var sessionColor: Color {
+        let palette: [Color] = [.blue, .teal, .indigo, .orange, .pink, .green]
+        let index = s.bundleID.utf8.reduce(0) { ($0 * 31 + Int($1)) % palette.count }
+        return palette[index]
+    }
     @State private var origin: UsageSession?
     private enum Mode { case move, left, right }
     @State private var mode: Mode = .move
     var body: some View {
-        let x = width * CGFloat(s.start / 86_400), w = max(width * CGFloat(s.duration / 86_400), 6)
-        RoundedRectangle(cornerRadius: 3)
-            .fill(store.selected == s.id ? Color.accentColor : Color.accentColor.opacity(0.55))
-            .frame(width: w, height: 22)
-            .offset(x: x, y: CGFloat(lane) * 26)
+        let x = width * CGFloat(s.start / 86_400), w = max(width * CGFloat(s.duration / 86_400), 12)
+        RoundedRectangle(cornerRadius: 6)
+            .fill(sessionColor)
+            .overlay(alignment: .leading) {
+                if w > 60 {
+                    Text(AppIdentity.shared.name(s.bundleID)).font(.caption2.weight(.medium))
+                        .foregroundStyle(.white).lineLimit(1).padding(.horizontal, 5)
+                }
+            }
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(store.selected == s.id ? Color.primary : .clear, lineWidth: 2))
+            .frame(width: w, height: 36)
+            .accessibilityLabel("\(AppIdentity.shared.name(s.bundleID)), \(formatHM(s.start)) to \(formatHM(s.end))")
+            .offset(x: x, y: CGFloat(lane) * 44 + 24)
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { v in
                     if origin == nil {
