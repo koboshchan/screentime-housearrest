@@ -60,3 +60,56 @@ Backlight is now part of source inventory, revision fingerprints, private verifi
 The prior refresh-only result demonstrated daemon refresh, not correct totals. Separate caller-owned iOS18 VM experiments found that closing dangling pre-day AppUsage starts corrected native per-app totals, and rewriting Backlight then rebuilding Local DeviceActivity cache corrected the daily total. One controlled 30-minute Preferences edit produced native Preferences and daily totals of 1823 seconds, including 23 seconds of natural use. That evidence motivates this implementation; the packaged integration itself still needs caller-owned VM verification after installation. No general real-device or iOS27 total-correction claim is made.
 
 Host validation covers union/overlap/gaps, empty edits, elapsed and future boundary rules, exact boundaries, dangling open versus previously closed history, crossing sessions, unsupported schema, CRC, multi-segment fail-closed behavior, mandatory Backlight backup metadata and corruption rejection, and a Backlight concurrent-change abort before usage mutation. Gemini reader regression checks remain unchanged.
+
+
+Native apps-only total integration, October 18
+
+Apply preserves the original Swift reader, Gemini stream writer, full knowledgeC
+SQL transaction, caller authentication and fixed native path discovery. After
+planning the streams, it now preflights native DeviceActivity cache replacements
+before taking the same fresh independently verified full backup. It no longer
+deletes Local on this route.
+
+Hourly and Daily totals are exact sums of applicationActivities durations,
+including overlap across apps. Category totals are recomputed from their app
+entries only. Web details are preserved for existing segments but never added
+again to category or segment totals. Larger old totals are replaced, not retained
+as maxima. Weekly app totals retain the other days by subtracting the cached
+edited Daily app amounts and adding the requested app amounts; inconsistent
+negative deltas fail closed before backup. It does not sum Daily caches outside
+the selected week.
+
+Every requested session is clipped into its proper hourly bucket, with full-day
+23/24/25-hour DST handling. Missing buckets are created only at deterministic
+timestamps in the discovered Hourly directory, with O_EXCL/O_NOFOLLOW and native
+template owner/group/mode. New buckets contain requested apps only, no copied
+historical web/pickup data. App/category metadata comes from existing validated
+native templates, not proof samples. Missing app templates, missing matching
+Daily/Weekly intervals, duplicate apps/categories, overlapping segments, ambiguous
+roots, symlinks and unsupported schema fail closed without writes.
+
+After backup verification and the existing revision checks, the stream/database
+writer runs as before. Cache revision is checked, then all segment replacements
+are written using original-byte comparisons. Metadata is written last. The
+Gemini bypass sets each granularity's lastUpdatedDate to at least
+max(now, editedDayEnd) + 30 days, preserving an already later date. There are no
+hardcoded proof dates, IDs, Python runtime or copied usage samples.
+
+This future date intentionally prevents the normal DeviceActivity cache refresh
+for the entire Local cache, including subsequent real usage, until that date.
+Apply's reply explicitly reports the hold. Reapplying recalculates the requested
+day exactly without accumulating it twice and extends the hold. No automatic
+unfreeze/background refresh service is introduced.
+
+SQLite rollback and the verified backup are unchanged. Multistore writes are
+still not atomic and do not claim automatic rollback; a partial error identifies
+the verified prewrite backup, whose complete directory inventory also records
+which hourly files were absent. Restoring must reconcile that inventory, not just
+overwrite existing files.
+
+Host-only synthetic tests exercise 2h + overlapping 2h = 4h, >24h, exact lower and
+fractional totals, web exclusion, no category doublecount, empty edits, repeat
+Apply/weekly deltas, new buckets, future-metadata preservation, malformed data,
+symlink/concurrent-file rejection, DST days, and production Apply with mandatory
+backup and revision race detection. No live install or Settings verification of
+this packaged integration has been performed.

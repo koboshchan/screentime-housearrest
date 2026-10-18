@@ -31,12 +31,14 @@ python3 Tests/check_scaffold.py
 xcrun --sdk macosx clang -isysroot "$HOSTSDK" -target "$HOST_TARGET" Tests/AuthEnvironmentChecks.c -o "$OUT/auth-environment-checks"
 "$OUT/auth-environment-checks"
 # Fixture constructor exists ONLY in this standalone host test executable.
-xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -O -D HOST_STORAGE_TEST -parse-as-library Core/*.swift Tests/NativeStorageChecks.swift -framework CryptoKit -lsqlite3 -lz -o "$OUT/native-storage-checks"
+xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -O -D HOST_STORAGE_TEST -parse-as-library Core/*.swift Tests/NativeStorageChecks.swift Tests/AppTotalFixtures.swift -framework CryptoKit -lsqlite3 -lz -o "$OUT/native-storage-checks"
 "$OUT/native-storage-checks"
 xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -O -D HOST_STORAGE_TEST -parse-as-library Core/*.swift Tests/GeminiRouteChecks.swift -framework CryptoKit -lsqlite3 -lz -o "$OUT/gemini-route-checks"
 "$OUT/gemini-route-checks"
 xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -O -D HOST_STORAGE_TEST -parse-as-library Core/*.swift Tests/NativeAggregateChecks.swift -framework CryptoKit -lsqlite3 -lz -o "$OUT/native-aggregate-checks"
 "$OUT/native-aggregate-checks"
+xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -O -D HOST_STORAGE_TEST -parse-as-library Core/*.swift Tests/AppTotalChecks.swift Tests/AppTotalFixtures.swift -framework CryptoKit -lsqlite3 -lz -o "$OUT/app-total-checks"
+"$OUT/app-total-checks"
 xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -O -D HOST_STORAGE_TEST -parse-as-library Core/*.swift Tests/GeminiAllocationChecks.swift -framework CryptoKit -lsqlite3 -lz -o "$OUT/gemini-allocation-checks"
 "$OUT/gemini-allocation-checks"
 # Positive and corruption checks on already signed artifacts, if available.

@@ -13,6 +13,8 @@ import Darwin
         try check(rejected,label)
     }
     static func main() throws {
+        // Epoch-zero cache fixtures represent a complete UTC day.
+        NSTimeZone.default = TimeZone(secondsFromGMT:0)!
         // All sources are newly created fixtures. Never instantiate device layout.
         let base = URL(fileURLWithPath:"/private/tmp").appendingPathComponent("ste-native-"+UUID().uuidString)
         try FileManager.default.createDirectory(at:base,withIntermediateDirectories:true)
@@ -379,6 +381,7 @@ import Darwin
         let backlightPath = backlightDir.appendingPathComponent("native-display")
         try privateWrite(Segment(created:-200,size:8192,records:[SegmentRecord(timestamp:-100,payload:NativeAggregates.backlightPayload(-100,true))]).encoded(),backlightPath)
         let fullStore = NativeStorage(database:parityDB,stream:usageDir,backups:parity.appendingPathComponent("Backups"),lockStream:lockDir,backlightStream:backlightDir,groupRoot:groups,runner:{ calls.append($0) })
+        try AppTotalFixtures.create(cache)
         let preBacklightRace = try boundedBytes(backlightPath)
         let preUsageRace = try boundedBytes(usagePath)
         let raceRevision = try fullStore.fingerprint()
@@ -390,15 +393,35 @@ import Darwin
             _ = bytes.withUnsafeBytes { pwrite(f,$0.baseAddress,$0.count,0) }; close(f)
         }
         try rejects("backlight revision race stops all apply writes") {
-            _ = try fullStore.apply(ApplyRequest(start:0,end:300,sessions:[],revision:raceRevision))
+            _ = try fullStore.apply(ApplyRequest(start:0,end:86400,sessions:[],revision:raceRevision))
         }
         fullStore.afterBackup = nil
         try check(try boundedBytes(usagePath) == preUsageRace,"backlight race leaves usage untouched")
         try fullStore.writeExisting(backlightPath,original:boundedBytes(backlightPath),replacement:preBacklightRace)
+        let cacheRacePath = cache.appendingPathComponent("Daily/ActivitySegments/0.0.plist")
+        let cacheRaceOld = try boundedBytes(cacheRacePath)
+        let cacheRaceRevision = try fullStore.fingerprint()
+        let beforeCacheRaceUsage = try boundedBytes(usagePath)
+        fullStore.afterBackup = {
+            let fd = open(cacheRacePath.path,O_WRONLY)
+            var byte: UInt8 = 0
+            _ = pwrite(fd,&byte,1,0); close(fd)
+        }
+        try rejects("cache revision race stops all apply writes") {
+            _ = try fullStore.apply(ApplyRequest(start:0,end:86400,sessions:[],revision:cacheRaceRevision))
+        }
+        fullStore.afterBackup = nil
+        try check(try boundedBytes(usagePath) == beforeCacheRaceUsage,"cache race leaves usage untouched")
+        try fullStore.writeExisting(cacheRacePath,original:boundedBytes(cacheRacePath),replacement:cacheRaceOld)
         let geminiDBBefore = try sqliteState(parityDB)
         let geminiRevision = try fullStore.fingerprint()
-        let geminiReply = try fullStore.apply(ApplyRequest(start:0,end:300,sessions:[StoredSession(bundle:"com.apple.mobilesafari",start:60,end:180)],revision:geminiRevision))
+        let geminiReply = try fullStore.apply(ApplyRequest(start:0,end:86400,sessions:[StoredSession(bundle:"com.apple.mobilesafari",start:60,end:180)],revision:geminiRevision))
         try check(geminiReply.ok && geminiReply.details["writer"] == "gemini_ios_full_native","shipping route selected")
+        let nativeDay = try NativeAppTotals.SegmentValue(boundedBytes(cache.appendingPathComponent("Daily/ActivitySegments/0.0.plist")))
+        try check(try NativeAppTotals.seconds(nativeDay.value["totalActivityDuration"]) == 120,"shipping Apply writes exact apps-only native total")
+        try check(geminiReply.details["totalPolicy"] == "sum_apps_including_overlap","shipping total policy")
+        let metadata = try PropertyListSerialization.propertyList(from:boundedBytes(cache.appendingPathComponent("Hourly/Metadata.plist")),format:nil) as! [String:Any]
+        try check(((metadata["value"] as! [String:Any])["lastUpdatedDate"] as! Date) > Date(),"shipping Apply freezes native refresh in future")
         try check(try sqliteState(parityDB) != geminiDBBefore,"full Gemini route rewrites knowledgeC")
         do {
             let db = try KnowledgeDatabase(parityDB)
@@ -424,6 +447,15 @@ import Darwin
         try check(try fullStore.verifyBackup(geminiReply.details["backupID"]!) == geminiRevision,"shipping Gemini route mandatory backup verified")
         let nativeManifest = try JSONDecoder().decode(BackupManifest.self,from:boundedBytes(parity.appendingPathComponent("Backups").appendingPathComponent(geminiReply.details["backupID"]!).appendingPathComponent("manifest.json")))
         try check(nativeManifest.files.contains { $0.name == "backlight-native-display" },"backlight independently archived")
+        let cachedHours = nativeManifest.files.filter { $0.name.contains("/Hourly/ActivitySegments/") }
+        try check(cachedHours.count == 1,"prewrite backup inventory records only original hour, not 23 newly created buckets")
+        guard let originalDaily = nativeManifest.files.first(where: { $0.name.hasSuffix("/Daily/ActivitySegments/0.0.plist") }) else {
+            throw StorageFailure("test_failed","Daily cache missing from verified backup")
+        }
+        let nativeArchive = parity.appendingPathComponent("Backups").appendingPathComponent(geminiReply.details["backupID"]!)
+        let cachedDaily = try NativeAppTotals.SegmentValue(boundedBytes(nativeArchive.appendingPathComponent(originalDaily.name)))
+        try check(try NativeAppTotals.seconds(cachedDaily.value["totalActivityDuration"]) == 999999,"verified backup retains old native cache bytes before exact sum")
+
         try check(try fullStore.verifyBackup(geminiReply.details["backupID"]!) == geminiRevision,"backlight archive verified with original checksum and metadata")
         let archivedBacklight = parity.appendingPathComponent("Backups").appendingPathComponent(geminiReply.details["backupID"]!).appendingPathComponent("backlight-native-display")
         let privateMode = try fullStore.metadata(archivedBacklight)
@@ -437,7 +469,7 @@ import Darwin
         _ = archiveBytes.withUnsafeBytes { pwrite(restoreFD,$0.baseAddress,$0.count,0) }; close(restoreFD)
         let nativeBacklight = try Segment.parse(boundedBytes(backlightPath))
         try check(nativeBacklight.records.contains { $0.timestamp == 60 && (try? NativeAggregates.backlightState($0)) == true },"native backlight session on")
-        _ = try parityStore.fingerprint() // Missing cleared Local roots are valid absent entries.
+        _ = try parityStore.fingerprint() // Patched Local roots remain fingerprinted and backed up.
         let response = try StorageProtocol.handle(HelperRequest(op:.read),storage:store)
         try check(response.ok && response.details["snapshot"] != nil,"read protocol")
         do {

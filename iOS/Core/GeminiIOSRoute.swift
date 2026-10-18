@@ -55,6 +55,7 @@ extension NativeStorage {
         let lockOld = try boundedBytes(lockPath)
         let lockNew = try GeminiIOSRoute.rewrite(lockOld,request:request,locks:true)
         let backlightPlans = try prepareBacklight(request)
+        let appTotalPlans = try prepareAppTotals(request)
         do { let db = try KnowledgeDatabase(database); try db.validateGeminiSchema() }
         let cacheBefore = try cacheRevision()
         let id = try backup()
@@ -74,16 +75,15 @@ extension NativeStorage {
             try db.execute("BEGIN IMMEDIATE")
             do { try db.replaceGemini(request); try db.execute("COMMIT") }
             catch { try? db.execute("ROLLBACK"); throw error }
-            try requireStorage(try cacheRevision() == cacheBefore,"DeviceActivity cache changed after backup; cache not cleared.","concurrent_change")
-            for root in try cacheRoots() {
-                // Gemini rm -rf Local removes the root too; do not merely empty it.
-                try rejectLinks(root)
-                try FileManager.default.removeItem(at:root)
-            }
+            try requireStorage(try cacheRevision() == cacheBefore,"DeviceActivity cache changed after backup; cache totals not written.","concurrent_change")
+            // Preserve the Gemini stream/database writer. Replace cache deletion
+            // with native apps-only segments and the proven future-metadata bypass.
+            // Metadata plans are last so no partial segment plan is marked fresh.
+            for plan in appTotalPlans { try writeAppTotal(plan) }
             try refreshRunner(["gemini-sync-or-open"])
         } catch {
             throw StorageFailure("partial_apply_failed","\(error). Verified current backup \(id). Stores are not one atomic transaction.")
         }
-        return HelperReply(ok:true,code:"refresh_requested",message:"Saved and requested Screen Time daemon refresh. Open Settings to verify updated usage.",details:["backupID":id,"revision":before,"writer":"gemini_ios_full_native","knowledgeC":"full_gemini_rewrite","aggregateInputs":"usage_and_backlight","multiStoreAtomic":"false"])
+        return HelperReply(ok:true,code:"refresh_requested",message:"Saved summed app totals and requested refresh. Native cache refresh is held for at least 30 days; later usage will not refresh automatically during that hold. Open Settings to verify.",details:["backupID":id,"revision":before,"writer":"gemini_ios_full_native","knowledgeC":"full_gemini_rewrite","aggregateInputs":"usage_and_backlight","totalPolicy":"sum_apps_including_overlap","cacheRefresh":"held_at_least_30_days","multiStoreAtomic":"false"])
     }
 }
