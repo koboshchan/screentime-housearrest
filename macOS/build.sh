@@ -16,7 +16,8 @@ cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleName</key><string>Screen Time Editor</string>
+<key>CFBundleName</key><string>Surface</string>
+<key>CFBundleDisplayName</key><string>Surface</string>
 <key>CFBundleIdentifier</key><string>app.screentimeeditor.macos</string>
 <key>CFBundleExecutable</key><string>ScreenTimeEditor</string>
 <key>CFBundlePackageType</key><string>APPL</string>

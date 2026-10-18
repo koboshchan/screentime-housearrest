@@ -1,5 +1,5 @@
 Package: com.kobosh.screentimeeditor
-Name: Screen Time Editor
+Name: Surface
 Version: 0.1.0
 Architecture: iphoneos-arm64e
 Description: Native Screen Time session editor for RootHide. Device integration is experimental.

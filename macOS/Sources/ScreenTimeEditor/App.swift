@@ -4,7 +4,7 @@ import SwiftUI
 struct ScreenTimeEditorApp: App {
   @State private var model = EditorModel()
   var body: some Scene {
-    WindowGroup("Screen Time Editor") {
+    WindowGroup("Surface") {
       ContentView().environment(model)
         .frame(minWidth: 980, minHeight: 620)
         .task {

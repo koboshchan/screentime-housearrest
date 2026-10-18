@@ -3,8 +3,8 @@
     {
       "value": {
         "linear-gradient": [
-          "srgb:0.12,0.43,0.94,1",
-          "srgb:0.055,0.25,0.77,1"
+          "srgb:0.10,0.39,0.39,1",
+          "srgb:0.035,0.20,0.23,1"
         ]
       }
     },
@@ -12,27 +12,24 @@
       "appearance": "dark",
       "value": {
         "linear-gradient": [
-          "srgb:0.075,0.20,0.40,1",
-          "srgb:0.025,0.075,0.19,1"
+          "srgb:0.055,0.16,0.18,1",
+          "srgb:0.02,0.065,0.085,1"
         ]
       }
     }
   ],
   "groups": [
     {
+      "name": "Reflection",
       "layers": [
         {
-          "glass": true,
-          "image-name": "Session.svg",
-          "name": "Session",
-          "fill": {
-            "solid": "srgb:0.32,0.95,0.85,1"
-          }
+          "name": "Reflection",
+          "image-name": "Reflection.svg",
+          "glass": true
         }
       ],
-      "name": "Selected session",
       "shadow": {
-        "kind": "layer-color",
+        "kind": "neutral",
         "opacity": 0.15
       },
       "translucency": {
@@ -41,17 +38,17 @@
       }
     },
     {
+      "name": "Surface line",
       "layers": [
         {
-          "glass": true,
-          "image-name": "Hands.svg",
-          "name": "Hands"
+          "name": "Surface line",
+          "image-name": "Horizon.svg",
+          "glass": true
         }
       ],
-      "name": "Clock hands",
       "shadow": {
         "kind": "neutral",
-        "opacity": 0.2
+        "opacity": 0.15
       },
       "translucency": {
         "enabled": false,
@@ -59,17 +56,17 @@
       }
     },
     {
+      "name": "Rising light",
       "layers": [
         {
-          "glass": true,
-          "image-name": "Dial.svg",
-          "name": "Dial"
+          "name": "Rising light",
+          "image-name": "Rise.svg",
+          "glass": true
         }
       ],
-      "name": "Clock dial",
       "shadow": {
         "kind": "neutral",
-        "opacity": 0.22
+        "opacity": 0.15
       },
       "translucency": {
         "enabled": false,

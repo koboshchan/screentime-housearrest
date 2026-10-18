@@ -2,8 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>com.kobosh.screentimeeditor</string>
-<key>CFBundleName</key><string>ScreenTimeEditor</string>
-<key>CFBundleDisplayName</key><string>Screen Time Editor</string>
+<key>CFBundleName</key><string>Surface</string>
+<key>CFBundleDisplayName</key><string>Surface</string>
 <key>CFBundleExecutable</key><string>ScreenTimeEditor</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>

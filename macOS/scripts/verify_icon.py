@@ -14,7 +14,7 @@ def verify_app(app, macos=False):
     info = plistlib.loads((app / "Contents/Info.plist" if macos else app / "Info.plist").read_bytes())
     entries = json.loads(subprocess.check_output(["/usr/bin/assetutil", "--info", str(resources / "Assets.car")]))
     names = {entry.get("Name") for entry in entries if entry.get("AssetType") == "IconGroup"}
-    assert {"AppIcon/Clock dial", "AppIcon/Clock hands", "AppIcon/Selected session"} <= names, names
+    assert {"AppIcon/Rising light", "AppIcon/Surface line", "AppIcon/Reflection"} <= names, names
     assert any(entry.get("AssetType") == "IconImageStack" and entry.get("Name") == "AppIcon" for entry in entries)
     if macos:
         assert info["CFBundleIconName"] == "AppIcon"

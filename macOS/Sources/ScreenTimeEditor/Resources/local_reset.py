@@ -104,7 +104,7 @@ def prepare(engine, start, end, sessions, api, paths=None):
                 "system_store_permission_denied") from exc
         raise api.StorageError(
             "Screen Time reset storage access was denied. Check Full Disk Access "
-            "for Screen Time Editor, then quit and reopen the app. "
+            "for Surface, then quit and reopen the app. "
             "No Screen Time stores were changed.", "permission_denied") from exc
     conn = engine.open_database()
     try:

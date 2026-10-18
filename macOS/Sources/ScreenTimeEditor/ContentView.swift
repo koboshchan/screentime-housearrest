@@ -99,7 +99,7 @@ struct FDAPanel: View {
       Text("macOS denied this read. Allow access for this signed app in System Settings, then quit and reopen it.")
         .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       Text("Privacy & Security › Full Disk Access").font(.callout.weight(.medium))
-      Text("Use + to add this exact Screen Time Editor app and enable it. The app never asks for your password.").font(.callout)
+      Text("Use + to add this exact Surface app and enable it. The app never asks for your password.").font(.callout)
       if let e = model.loadError {
         DisclosureGroup("Details") {
           Text(e).font(.caption.monospaced()).foregroundStyle(.primary).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
@@ -122,7 +122,7 @@ struct PermissionView: View {
     ContentUnavailableView {
       Label("Full Disk Access needed", systemImage: "lock")
     } description: {
-      Text("macOS blocked reading Screen Time data. Open System Settings, go to Privacy & Security, Full Disk Access, switch on Screen Time Editor, then quit and reopen the app. Nothing is shown until the real data can be read.")
+      Text("macOS blocked reading Screen Time data. Open System Settings, go to Privacy & Security, Full Disk Access, switch on Surface, then quit and reopen the app. Nothing is shown until the real data can be read.")
     } actions: {
       Button("Open Full Disk Access Settings") {
         if let u = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") { NSWorkspace.shared.open(u) }
@@ -167,9 +167,9 @@ struct ApplyPermissionHelp: View {
         .font(.title2.weight(.semibold))
       Text(model.applyNeedsSystemPrivileges
         ? "The SIP-off reset needs a system-owned Biome folder. SIP disabled and Full Disk Access do not override its filesystem permissions. This app has no installed privileged helper, so it cannot perform this reset as your user."
-        : "Allow Screen Time Editor in System Settings, Privacy & Security, Full Disk Access. Then quit and reopen this app. Your edits have not been discarded.")
+        : "Allow Surface in System Settings, Privacy & Security, Full Disk Access. Then quit and reopen this app. Your edits have not been discarded.")
         .fixedSize(horizontal: false, vertical: true)
-      Text("Grant access to Screen Time Editor, not to Python globally. The bundled backend runs as a child of this app.")
+      Text("Grant access to Surface, not to Python globally. The bundled backend runs as a child of this app.")
         .font(.callout).foregroundStyle(.secondary)
       if let details = model.applyPermissionDetails {
         DisclosureGroup("Technical details") {
