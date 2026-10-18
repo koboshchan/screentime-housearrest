@@ -7,6 +7,15 @@ struct ContentView: View {
     var body: some View {
         NavigationView {
             List {
+                Section(footer: Text("Choose today or any of the previous 14 days. Switching dates discards unsaved edits.")) {
+                    DatePicker("Date", selection: Binding(
+                        get: { store.selectedDate },
+                        set: { store.selectDate($0) }
+                    ), in: store.dateRange, displayedComponents: .date)
+                    .datePickerStyle(.compact)
+                    .disabled(store.busy)
+                    .accessibilityIdentifier("usageDatePicker")
+                }
                 Section {
                     AccessStatusView(summary: store.capability.summary, note: store.loadNote, available: store.capability.canApply)
                 }
@@ -33,7 +42,8 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("Usage")
-            .toolbar { Button { showingAdd = true } label: { Image(systemName: "plus") } }
+            .environment(\.timeZone, .autoupdatingCurrent)
+            .toolbar { Button { showingAdd = true } label: { Image(systemName: "plus") }.disabled(store.busy || !store.loaded) }
             .sheet(isPresented: $showingAdd) { NavigationStack { SessionEditor(store: store, session: nil) } }
         }
         .navigationViewStyle(StackNavigationViewStyle())
@@ -67,7 +77,7 @@ struct SessionEditor: View {
         let c = Calendar.current.dateComponents([.hour, .minute], from: d)
         return TimeInterval((c.hour ?? 0) * 3600 + (c.minute ?? 0) * 60)
     }
-    private func date(_ t: TimeInterval) -> Date { Calendar.current.startOfDay(for: Date()).addingTimeInterval(t) }
+    private func date(_ t: TimeInterval) -> Date { Calendar.current.startOfDay(for: store.selectedDate).addingTimeInterval(t) }
 
     var body: some View {
         Form {

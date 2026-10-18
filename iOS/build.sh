@@ -24,8 +24,10 @@ xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -O -o "$OUT/hel
 xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -D HOST_IPC_TEST -parse-as-library Core/*.swift App/HelperClient.swift Tests/IPCChecks.swift -framework CryptoKit -lsqlite3 -lz -o "$OUT/ipc-checks"
 "$OUT/ipc-checks" "$PWD/$OUT/helper-host-stub"
 # Store confirmation flow uses a test-only transport, never the live helper.
-xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -parse-as-library Core/*.swift App/Store.swift Tests/LossyApplyChecks.swift -framework SwiftUI -framework CryptoKit -lsqlite3 -lz -o "$OUT/lossy-apply-checks"
+xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -parse-as-library Core/*.swift App/UsageDates.swift App/Store.swift Tests/LossyApplyChecks.swift -framework SwiftUI -framework CryptoKit -lsqlite3 -lz -o "$OUT/lossy-apply-checks"
 "$OUT/lossy-apply-checks"
+xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -parse-as-library Core/*.swift App/UsageDates.swift App/Store.swift Tests/DateSelectionChecks.swift -framework SwiftUI -framework CryptoKit -lsqlite3 -lz -o "$OUT/date-selection-checks"
+"$OUT/date-selection-checks"
 python3 Tests/check_scaffold.py
 # Exercise the production C sanitizer with a real Darwin environ vector.
 xcrun --sdk macosx clang -isysroot "$HOSTSDK" -target "$HOST_TARGET" Tests/AuthEnvironmentChecks.c -o "$OUT/auth-environment-checks"

@@ -5,6 +5,26 @@ import UIKit
 
 @MainActor
 final class Store: ObservableObject {
+    @Published private(set) var selectedDate: Date
+    private let calendar: Calendar
+    private let now: () -> Date
+
+    init(calendar: Calendar = .autoupdatingCurrent, now: @escaping () -> Date = Date.init) {
+        self.calendar = calendar
+        self.now = now
+        self.selectedDate = calendar.startOfDay(for: now())
+    }
+
+    var dateRange: ClosedRange<Date> { UsageDates.range(now: now(), calendar: calendar) }
+
+    func selectDate(_ date: Date) {
+        guard !busy else { return }
+        let day = UsageDates.clamped(date, now: now(), calendar: calendar)
+        guard day != selectedDate else { return }
+        selectedDate = day
+        reload()
+    }
+
     @Published var sessions: [UsageSession] = []
     @Published var capability: Capability = .unknown("Checking.")
     @Published var error: String?
@@ -18,7 +38,7 @@ final class Store: ObservableObject {
     private var pendingSourceOverride = false
     var uneditableCount: Int { sessions.filter { (try? SessionRules.validate($0)) == nil }.count }
     var lossyMessage: String {
-        "\(uneditableCount) session(s) cannot be represented by this editor and will be omitted when today is rewritten. Their recorded usage will be lost or changed. A verified backup is made first. Continue?"
+        "\(uneditableCount) session(s) cannot be represented by this editor and will be omitted when the selected day is rewritten. Their recorded usage will be lost or changed. A verified backup is made first. Continue?"
     }
     func confirmLossyApply() {
         apply(override: pendingSourceOverride, allowLossy: true)
@@ -29,12 +49,13 @@ final class Store: ObservableObject {
     private var dayEnd: TimeInterval = 0
 
     var loadNote: String {
-        if loaded { return "Showing today's usage as stored on this device. Nothing changes until you tap Apply, and a verified backup is made first." }
+        if loaded { return "Showing usage for the selected date as stored on this device. Nothing changes until you tap Apply, and a verified backup is made first." }
         return "Existing usage has not been read. Composed sessions stay in memory only; closing the app discards them."
     }
     var canApply: Bool { capability.canApply && loaded && revision != nil && !busy && !sessions.isEmpty }
 
     func refreshCapability() {
+        guard !busy else { return }
         busy = true
         Task.detached {
             let r = HelperClient.run(.probe)
@@ -43,12 +64,17 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Reads current usage from the helper, replacing any in-memory edits (used by Reload).
+    /// Reload only reads. Switching dates discards the previous in-memory draft.
     func reload() {
-        let cal = Calendar.current
-        let start = cal.startOfDay(for: Date())
-        let end = cal.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)
-        let ds = start.timeIntervalSinceReferenceDate, de = end.timeIntervalSinceReferenceDate
+        guard !busy else { return }
+        selectedDate = UsageDates.clamped(selectedDate, now: now(), calendar: calendar)
+        let interval = UsageDates.interval(for: selectedDate, calendar: calendar)
+        let ds = interval.start.timeIntervalSinceReferenceDate
+        let de = interval.end.timeIntervalSinceReferenceDate
+        // Never leave an old day's draft/revision available after a failed read.
+        loaded = false; revision = nil; sessions = []; selected = nil
+        error = nil; status = nil; warnings = []
+        showStale = false; showLossyConfirmation = false; pendingSourceOverride = false
         busy = true
         Task.detached {
             let reply = HelperClient.run(.read)
