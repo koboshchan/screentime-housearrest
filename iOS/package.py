@@ -26,7 +26,7 @@ def main():
         raise RuntimeError("Official RootHide Theos fork required at " + str(theos))
     before = sources()
     subprocess.run(["gmake", "ScreenTimeEditor", "THEOS=" + str(theos)], check=True, env=env)
-    app = ROOT/".theos/obj/ScreenTimeEditor.app/ScreenTimeEditor"
+    app = ROOT/".theos/obj/Surface.app/ScreenTimeEditor"
     signed = subprocess.check_output(["ldid", "-h", str(app)], env=env).decode()
     pin = next(line.split("=", 1)[1] for line in signed.splitlines() if line.startswith("CDHash="))
     if len(pin) != 40 or any(c not in "0123456789abcdef" for c in pin):
@@ -35,7 +35,7 @@ def main():
     if sources() != before:
         raise RuntimeError("Sources changed while building. Wait for source owner handoff and rebuild.")
     os.environ["PATH"] = env["PATH"]
-    package = ROOT/"packages/com.kobosh.screentimeeditor_0.1.0_iphoneos-arm64e.deb"
+    package = ROOT/"packages/com.kobosh.surface_0.1.0_iphoneos-arm64e.deb"
     verify(package)
     print(package)
     return 0

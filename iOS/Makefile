@@ -10,6 +10,7 @@ override _THEOS_PLATFORM_DPKG_DEB_COMPRESSION = xz
 include $(THEOS)/makefiles/common.mk
 
 APPLICATION_NAME = ScreenTimeEditor
+ScreenTimeEditor_BUNDLE_NAME = Surface
 ScreenTimeEditor_FILES = $(wildcard Core/*.swift App/*.swift)
 ScreenTimeEditor_FRAMEWORKS = UIKit SwiftUI Foundation CryptoKit
 ScreenTimeEditor_LIBRARIES = sqlite3 z
@@ -27,7 +28,7 @@ stehelper_FRAMEWORKS = Foundation CryptoKit
 stehelper_LIBRARIES = sqlite3 z
 stehelper_CODESIGN_FLAGS = -Shelper-entitlements.plist
 stehelper_SWIFT_VERSION = 5
-stehelper_INSTALL_PATH = /Applications/ScreenTimeEditor.app
+stehelper_INSTALL_PATH = /Applications/Surface.app
 
 include $(THEOS_MAKE_PATH)/application.mk
 include $(THEOS_MAKE_PATH)/tool.mk
@@ -37,4 +38,4 @@ before-all::
 
 # Explicitly authorized fixed helper only; archive ownership is numeric root:wheel.
 after-stage::
-	chmod 4755 "$(THEOS_STAGING_DIR)/Applications/ScreenTimeEditor.app/stehelper"
+	chmod 4755 "$(THEOS_STAGING_DIR)/Applications/Surface.app/stehelper"

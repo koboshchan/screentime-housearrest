@@ -60,13 +60,15 @@ def signature(path):
 
 def verify(package):
     fields = command("dpkg-deb", "-f", str(package)).decode()
+    assert "Package: com.kobosh.surface\n" in fields
     assert "Architecture: iphoneos-arm64e" in fields
     assert "firmware (>= 18.0)" in fields
     raw = command("dpkg-deb", "--fsys-tarfile", str(package))
     with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
         for entry in archive:
+            assert "ScreenTimeEditor.app" not in Path(entry.name).parts, "Old app path must remain untouched"
             assert entry.uid == 0 and entry.gid == 0, "Non-root archive ownership"
-            helper = entry.name.removeprefix("./") == "Applications/ScreenTimeEditor.app/stehelper"
+            helper = entry.name.removeprefix("./") == "Applications/Surface.app/stehelper"
             assert entry.mode & 0o7777 == 0o4755 if helper else not (entry.mode & 0o6000), "Unexpected privileged mode"
             assert not (entry.mode & 0o022), "Writable package entry"
             assert not entry.issym() and not entry.islnk(), "Unexpected package link"
@@ -75,10 +77,10 @@ def verify(package):
         command("dpkg-deb", "-x", str(package), tmp)
         command("dpkg-deb", "-e", str(package), tmp + "/control")
         assert not any((Path(tmp)/"control"/name).exists() for name in ("preinst","postinst","prerm","postrm")), "Unexpected maintainer script"
-        app = Path(tmp)/"Applications/ScreenTimeEditor.app"
+        app = Path(tmp)/"Applications/Surface.app"
         info = plistlib.loads((app/"Info.plist").read_bytes())
         assert info["MinimumOSVersion"] == "18.0"
-        assert info["CFBundleIdentifier"] == "com.kobosh.screentimeeditor"
+        assert info["CFBundleIdentifier"] == "com.kobosh.surface"
         for name in ("ScreenTimeEditor", "stehelper"):
             assert (app/name).stat().st_mode & 0o7777 == (0o4755 if name == "stehelper" else 0o755)
             signature(app/name)

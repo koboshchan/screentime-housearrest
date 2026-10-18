@@ -43,9 +43,9 @@ xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -O -D HOST_STOR
 "$OUT/gemini-allocation-checks"
 # Positive and corruption checks on already signed artifacts, if available.
 # This does not rebuild, alter, install or run any package.
-if [[ -f .theos/_/Applications/ScreenTimeEditor.app/ScreenTimeEditor ]]; then
-    python3 Tests/package_checks.py .theos/_/Applications/ScreenTimeEditor.app/ScreenTimeEditor
-    python3 Tests/package_checks.py .theos/_/Applications/ScreenTimeEditor.app/stehelper
+if [[ -f .theos/_/Applications/Surface.app/ScreenTimeEditor ]]; then
+    python3 Tests/package_checks.py .theos/_/Applications/Surface.app/ScreenTimeEditor
+    python3 Tests/package_checks.py .theos/_/Applications/Surface.app/stehelper
 fi
 file "$APP/ScreenTimeEditor" "$APP/stehelper"
 python3 ../macOS/scripts/verify_deployment.py ios
