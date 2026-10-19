@@ -6,4 +6,5 @@
 <key>com.apple.private.security.storage.AppBundles</key><true/>
 <key>com.apple.private.security.storage.AppDataContainers</key><true/>
 <key>com.apple.private.security.storage-exempt.heritable</key><true/>
+<key>com.apple.rootless.storage.coreduet_knowledge_store</key><true/>
 </dict></plist>

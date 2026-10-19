@@ -36,6 +36,10 @@ def main():
     make_args = ["THEOS=" + str(theos), "THEOS_PACKAGE_SCHEME=" + args.scheme,
                  "_THEOS_RELATIVE_DATA_DIR=" + data_dir]
     before = sources()
+    # Re-sign outputs after entitlement-only changes before deriving the caller pin.
+    for relative in ("obj/Surface.app/ScreenTimeEditor", "obj/arm64/Surface.app/ScreenTimeEditor",
+                     "obj/stehelper", "obj/arm64/stehelper"):
+        (ROOT/data_dir/relative).unlink(missing_ok=True)
     subprocess.run(["gmake", "ScreenTimeEditor", *make_args], check=True, env=env)
     app = ROOT/data_dir/"obj/Surface.app/ScreenTimeEditor"
     signed = subprocess.check_output(["ldid", "-h", str(app)], env=env).decode()

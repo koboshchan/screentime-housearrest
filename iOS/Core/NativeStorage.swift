@@ -98,7 +98,7 @@ func rejectLinks(_ url: URL) throws {
         var info = stat()
         if lstat(current,&info) == 0 {
             try requireStorage(info.st_mode & S_IFMT != S_IFLNK, "Symbolic links are not accepted.", "unsafe_path")
-        } else if errno != ENOENT { throw StorageFailure("read_failed", "Cannot inspect storage path.") }
+        } else if errno != ENOENT { throw StorageFailure("read_failed", "Cannot inspect storage path (errno \(errno), component \(current)).") }
     }
 }
 func regularFD(_ url: URL, flags: Int32 = O_RDONLY) throws -> Int32 {

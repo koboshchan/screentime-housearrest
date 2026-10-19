@@ -14,7 +14,18 @@ enum HelperClient {
     }
     static func run(_ request: HelperRequest) -> HelperReply? {
         guard let path = helperPath else { return nil }
-        return execute(path: path, request: request, extra: [])
+        let result = execute(path: path, request: request, extra: [])
+        // Capability codes only, never sessions, paths, backup IDs or payloads.
+        if request.op == .probe {
+            let code = result?.code ?? "no_reply"
+            NSLog("Surface helper probe ok=%d code=%@", result?.ok == true ? 1 : 0, code)
+            if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
+                let record = "\(Date().timeIntervalSince1970) ok=\(result?.ok == true) code=\(code)\n"
+                try? FileManager.default.createDirectory(at: caches, withIntermediateDirectories: true)
+                try? record.write(to: caches.appendingPathComponent("Surface-probe.txt"), atomically: true, encoding: .utf8)
+            }
+        }
+        return result
     }
     static func run(_ op: HelperOp) -> HelperReply? { run(HelperRequest(op: op)) }
 

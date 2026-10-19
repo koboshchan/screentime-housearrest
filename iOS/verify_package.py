@@ -55,6 +55,8 @@ def signature(path):
     parsed = plistlib.loads(ent[8:])
     assert all(parsed.get(key) is True for key in KEYS)
     assert plistlib.loads(command("ldid", "-e", str(path))) == parsed
+    if path.name == "stehelper":
+        assert parsed.get("com.apple.rootless.storage.coreduet_knowledge_store") is True
     build = command("xcrun", "vtool", "-show-build", str(path)).decode()
     assert "platform IOS" in build and "minos 18.0" in build, build
     print(path.name, "arm64 iOS18 SHA256 CodeDirectory pages and entitlements verified")
