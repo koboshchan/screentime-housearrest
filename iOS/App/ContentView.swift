@@ -42,9 +42,6 @@ struct ContentView: View {
                 }
                 if let e = store.error { Section { Text(e).foregroundColor(.red) } }
                 if let m = store.status { Section { Text(m) } }
-                if !store.warnings.isEmpty {
-                    Section(header: Text("Notes")) { ForEach(store.warnings, id: \.self) { Text($0).font(.footnote).foregroundColor(.secondary) } }
-                }
                 Section {
                     Button("Reload from device") { store.reload() }.disabled(store.busy || !store.capability.canApply)
                     Button("Apply") { store.apply() }.disabled(!store.canApply || store.selectingSessions)

@@ -47,6 +47,41 @@ import Darwin
         try rejects("mismatched backlight clocks") {
             _ = try NativeAggregates.backlight(original,history:[SegmentRecord(timestamp:1,payload:NativeAggregates.backlightPayload(2,true))],request:empty,now:500)
         }
+        let skewed = [
+            SegmentRecord(timestamp:50,flag:77,payload:try NativeAggregates.backlightPayload(49.9982,true)),
+            SegmentRecord(timestamp:180,payload:try NativeAggregates.backlightPayload(179.9977,false)),
+            SegmentRecord(timestamp:420,flag:91,payload:try NativeAggregates.backlightPayload(419.9989,true))]
+        let skewedData = try Segment(created:0,size:4096,records:skewed).encoded()
+        let skewedResult = try Segment.parse(NativeAggregates.backlight(skewedData,history:skewed,request:empty,now:500))
+        try check(skewedResult.records.first?.payload == skewed[0].payload && skewedResult.records.first?.flag == 77 &&
+                  skewedResult.records.last?.payload == skewed[2].payload && skewedResult.records.last?.flag == 91,
+                  "bounded native capture skew retains outside bytes and flags")
+        try check(try !NativeAggregates.backlightState(skewedResult.records.first { $0.timestamp == 400 }!),
+                  "bounded skew retains elapsed restore state")
+        for edge in [100.0,400.0] {
+            let row = SegmentRecord(timestamp:edge+0.001,payload:try NativeAggregates.backlightPayload(edge-0.001,true))
+            try rejects("small skew crossing edit boundary fails closed") {
+                _ = try NativeAggregates.backlight(skewedData,history:skewed+[row],request:empty,now:500)
+            }
+        }
+        let exactSkew = SegmentRecord(timestamp:100,payload:try NativeAggregates.backlightPayload(99.999,true))
+        try rejects("exact boundary skew fails closed") {
+            _ = try NativeAggregates.backlight(skewedData,history:skewed+[exactSkew],request:empty,now:500)
+        }
+        let reorder = [
+            SegmentRecord(timestamp:50,payload:try NativeAggregates.backlightPayload(50.002,true)),
+            SegmentRecord(timestamp:50.001,payload:try NativeAggregates.backlightPayload(49.999,false))]
+        try rejects("small skew reversing native event order fails closed") {
+            _ = try NativeAggregates.backlight(skewedData,history:reorder,request:empty,now:500)
+        }
+        let coverageBoundary = SegmentRecord(timestamp:80.001,payload:try NativeAggregates.backlightPayload(79.999,true))
+        try rejects("small skew crossing preserved coverage boundary fails closed") {
+            _ = try NativeAggregates.backlight(skewedData,history:skewed+[coverageBoundary],request:empty,now:500,
+                                              preserved:[StoredSession(bundle:"com.example.before",start:80,end:90)])
+        }
+        try rejects("capture skew at cap fails closed") {
+            _ = try NativeAggregates.backlightState(SegmentRecord(timestamp:1,payload:NativeAggregates.backlightPayload(1.006,true)))
+        }
         var corrupt = original; corrupt[40] ^= 1
         try rejects("CRC rejected") { _ = try Segment.parse(corrupt) }
         func usage(_ events: [UsageEvent]) throws -> Data {
@@ -129,6 +164,28 @@ import Darwin
         try check(clipped == [StoredSession(bundle:"com.example.end",start:dayEnd-10,end:dayEnd)],"selected day clips exactly at 813999600")
         let ambiguous = try usage([UsageEvent(opening:true,time:day+10,bundle:"com.example.a"),UsageEvent(opening:true,time:day+20,bundle:"com.example.a"),UsageEvent(opening:false,time:day+30,bundle:"com.example.a")])
         try rejects("duplicate natural starts fail closed") { _ = try NativeAggregates.preservedUsage(Segment.parse(ambiguous).records,request:partial,calendar:cal) }
+        let wholeDay = ApplyRequest(start:day,end:dayEnd,sessions:[],revision:revision)
+        try check(try NativeAggregates.preservedUsage(Segment.parse(ambiguous).records,request:wholeDay,calendar:cal).isEmpty,
+                  "duplicate starts entirely replaced by full-day edit need no preserved coverage")
+        let fromYesterday = try usage([
+            UsageEvent(opening:true,time:day-10,bundle:"com.example.a"),
+            UsageEvent(opening:true,time:day+20,bundle:"com.example.a"),
+            UsageEvent(opening:false,time:day+30,bundle:"com.example.a")])
+        try check(try NativeAggregates.preservedUsage(Segment.parse(fromYesterday).records,request:wholeDay,calendar:cal).isEmpty,
+                  "full-day replacement never reconstructs uncertain pre-day usage")
+        try rejects("partial day still rejects ambiguous crossing history") {
+            _ = try NativeAggregates.preservedUsage(Segment.parse(fromYesterday).records,request:partial,calendar:cal)
+        }
+        let unknownDay = SegmentRecord(state:2,timestamp:day+10,payload:Data([1]))
+        try rejects("full-day ambiguity allowance does not bypass unknown schema") {
+            _ = try NativeAggregates.preservedUsage([unknownDay],request:wholeDay,calendar:cal)
+        }
+        let beforeSource = try usage([UsageEvent(opening:true,time:day-50,bundle:"com.example.before"),
+                                     UsageEvent(opening:false,time:day-10,bundle:"com.example.before")])
+        let earlierRows = try Segment.parse(beforeSource).records
+        let fullRewrite = try Segment.parse(NativeAggregates.usage(beforeSource,request:wholeDay))
+        try check(fullRewrite.records.map(\.payload) == earlierRows.map(\.payload),
+                  "full-day change preserves closed earlier history byte for byte")
         let openOnly = try usage([UsageEvent(opening:true,time:hour,bundle:"com.example.open")])
         try check(try NativeAggregates.preservedUsage(Segment.parse(openOnly).records,request:partial,calendar:cal).isEmpty,"ongoing usage never assigned invented end")
         let unknown = SegmentRecord(state:2,timestamp:813923390,payload:Data([1]))

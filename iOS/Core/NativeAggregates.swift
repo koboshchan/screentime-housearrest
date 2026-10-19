@@ -31,7 +31,7 @@ enum NativeAggregates {
                            "Unsupported Backlight payload; nothing applied.","unsupported_schema")
         let clock = Double(bitPattern:data.le64(1))
         try validClock(clock)
-        try requireStorage(abs(clock-record.timestamp) < 0.001,"Backlight clocks disagree; nothing applied.","unsupported_schema")
+        try requireStorage(abs(clock-record.timestamp) < 0.005,"Backlight clocks disagree; nothing applied.","unsupported_schema")
         return data[10] == 1
     }
     static func backlight(_ original: Data, history: [SegmentRecord], request: ApplyRequest,
@@ -39,7 +39,25 @@ enum NativeAggregates {
                           preserved: [StoredSession] = []) throws -> Data {
         var segment = try Segment.parse(original)
         let active = ordered(history.filter { $0.state == 1 })
-        for row in active { _ = try backlightState(row) }
+        // Native capture observed independent envelope/payload clocks differing
+        // by 1-3ms. Allow only bounded sub-5ms capture skew, never a different
+        // side of an edit/restore boundary or a different event ordering.
+        let boundaries = [request.start,request.end] + preserved.flatMap { [$0.start,$0.end] }
+        var previousClock: Double?
+        for row in active {
+            _ = try backlightState(row)
+            let clock = Double(bitPattern:row.payload.le64(1))
+            for edge in boundaries {
+                try requireStorage((row.timestamp < edge) == (clock < edge) &&
+                                   (row.timestamp <= edge) == (clock <= edge),
+                                   "Backlight clocks straddle an edit boundary; nothing applied.","unsupported_schema")
+            }
+            if let previousClock {
+                try requireStorage(clock >= previousClock,
+                                   "Backlight clock ordering disagrees; nothing applied.","unsupported_schema")
+            }
+            previousClock = clock
+        }
         // Preserve all opaque states. Reject them in the edit interval since
         // their native meaning is unknown.
         try requireStorage(!history.contains { $0.state != 1 && $0.timestamp >= request.start && $0.timestamp < request.end },
@@ -92,6 +110,11 @@ enum NativeAggregates {
         }
         let lo = dayStart.timeIntervalSinceReferenceDate, hi = dayEnd.timeIntervalSinceReferenceDate
         try requireStorage(request.end <= hi,"Edit crosses selected day; nothing applied.","unsupported_schema")
+        // A full-day replacement has no selected-day outside fragments to
+        // reconstruct. Repeated native starts inside the replaced interval
+        // cannot affect preserved coverage and must not block that replacement.
+        // Keep the strict ambiguity check for partial-day edits.
+        let replacesSelectedDay = request.start == lo && request.end == hi
         var open: [String:Double] = [:], result: [StoredSession] = []
         for row in ordered(records) {
             guard row.state == 1, let event = try? AppUsageProto.decode(row.payload) else {
@@ -101,7 +124,7 @@ enum NativeAggregates {
             }
             if event.opening {
                 if let prior = open[event.bundle] {
-                    try requireStorage(row.timestamp < lo || prior >= hi,
+                    try requireStorage(replacesSelectedDay || row.timestamp < lo || prior >= hi,
                                        "Ambiguous selected-day AppUsage starts; nothing applied.","unsupported_schema")
                 }
                 open[event.bundle] = row.timestamp
