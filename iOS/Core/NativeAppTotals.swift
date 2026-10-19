@@ -209,6 +209,12 @@ extension NativeStorage {
     /// All cache planning and schema checks happen BEFORE the verified backup.
     /// Missing/ambiguous layouts fail closed rather than falling back to a union.
     func prepareAppTotals(_ request: ApplyRequest, now: Date = Date()) throws -> [NativeCacheWrite] {
+        #if !HOST_STORAGE_TEST
+        // Unconditional privileged denial, before reads, backup or mutation.
+        // HOST_STORAGE_TEST runs historical algorithms on disposable fixtures only.
+        try NativeApplySafety.requireValidatedBaseline()
+        #endif
+
         let roots = try cacheRoots()
         try requireStorage(roots.count == 1, "Expected one local DeviceActivity cache. Open Settings Screen Time, then reload.", "unsupported_schema")
         let root = roots[0]
@@ -427,5 +433,14 @@ extension NativeStorage {
             }
         }
         try requireStorage(fsync(fd) == 0, "Cache sync failed.", "partial_apply_failed")
+    }
+}
+
+// Emergency quarantine: no cache presence or metadata proves completeness.
+// Existing Daily/Weekly files may have been synthesized by older Surface builds.
+// Category semantics and cloud propagation are not yet independently validated.
+enum NativeApplySafety {
+    static func requireValidatedBaseline() throws {
+        throw StorageFailure("apply_quarantined", "Apply is disabled: weekly history completeness, prior synthesized caches, and category semantics cannot yet be verified. Nothing applied. Existing data and backups are unchanged.")
     }
 }

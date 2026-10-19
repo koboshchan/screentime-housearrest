@@ -39,6 +39,12 @@ enum GeminiIOSRoute {
 
 extension NativeStorage {
     public func apply(_ request: ApplyRequest) throws -> HelperReply {
+        #if !HOST_STORAGE_TEST
+        // Unconditional privileged denial, before reads, backup or mutation.
+        // HOST_STORAGE_TEST runs historical algorithms on disposable fixtures only.
+        try NativeApplySafety.requireValidatedBaseline()
+        #endif
+
         try validClock(request.start); try validClock(request.end)
         try requireStorage(request.start < request.end && request.end-request.start <= 90000 && request.sessions.count <= 10000 && request.revision.count == 64,"Invalid edit interval.","invalid_input")
         for session in request.sessions {

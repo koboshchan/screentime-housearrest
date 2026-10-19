@@ -18,6 +18,15 @@ import Darwin
     }
     static func main() throws {
         NSTimeZone.default = TimeZone(secondsFromGMT:0)!
+        for scenario in ["missing Weekly", "sparse Daily", "existing synthetic cache", "unknown category semantics"] {
+            do {
+                try NativeApplySafety.requireValidatedBaseline()
+                throw StorageFailure("test_failed", "quarantine allowed " + scenario)
+            } catch let error as StorageFailure {
+                try check(error.code == "apply_quarantined", "production safety policy rejects " + scenario)
+            }
+        }
+
         let rev = String(repeating: "0", count: 64)
         let request = ApplyRequest(start: 0, end: 86400, sessions: [
             StoredSession(bundle: AppTotalFixtures.a, start: 0, end: 7200),

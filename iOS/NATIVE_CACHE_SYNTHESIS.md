@@ -1,3 +1,10 @@
+# Emergency safety quarantine
+
+Production helper Apply and cache planning are disabled unconditionally before any reads, backup, refresh, or write. This includes apparently populated Daily/Weekly caches: older builds may have synthesized them, and file presence cannot prove provenance or completeness. No UI or request flag bypass exists.
+
+This is containment, not a validated reconstruction algorithm. Historical transformations remain exercised under HOST_STORAGE_TEST on disposable fixtures only. Missing weekly observations are not proven zero, hourly totals are not interchangeable with native Daily/Weekly, and category semantics remain unresolved. Cloud propagation of applied usage is user-reported; propagation of incomplete weekly caches is unverified.
+
+Installing this fix does not undo prior Apply, reset future metadata, restore history, or modify existing usage. A separate read-only backup comparison is required.
 Native cache synthesis uses this device's existing Local/Hourly schema and calendar settings. No VM identity, sample usage, or Python proof data is imported into the app.
 
 The schema reference was inspected locally on the Mac in 24hplus/patched_DeviceActivity/Local. The proof's metadata processing changes only lastUpdatedDate; the remaining native metadata retains Hourly/Daily/Weekly segmentInterval values 0/1/2, a common UUID recordName prefix with the granularity suffix, and identical device/user objects. Native segment value keys match across the three granularities. The current XS Max Hourly value and metadata were independently checked read-only and match that structure. Raw reference/device contents remain private and untracked.
