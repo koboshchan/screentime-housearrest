@@ -40,7 +40,47 @@ import Darwin
         let exactData = try Segment(created:0,size:4096,records:exact).encoded()
         let exactResult = try Segment.parse(NativeAggregates.backlight(exactData,history:exact,request:empty,now:500))
         try check(try NativeAggregates.backlightState(exactResult.records.last(where:{$0.timestamp == 400})!),"exact boundary wins")
-        try rejects("unknown elapsed boundary") { _ = try NativeAggregates.backlight(Segment(created:0,size:4096,records:[]).encoded(),history:[],request:empty,now:500) }
+        let blank = try Segment(created:0,size:4096,records:[]).encoded()
+        for clock in [90.0,380.0,500.0] {
+            let synthesized = try Segment.parse(NativeAggregates.backlight(blank,history:[],request:request,now:clock))
+            try check(synthesized.records.map(\.timestamp) == [100,120,250,300,360,400],
+                      "missing boundary synthesizes closed interval independent of now")
+            try check(try synthesized.records.map { try NativeAggregates.backlightState($0) } == [false,true,false,true,false,false],
+                      "missing boundary keeps overlapping sessions and gaps, never ongoing on")
+        }
+        let firstLater = [SegmentRecord(timestamp:450,flag:77,payload:try NativeAggregates.backlightPayload(450,true)),
+                          SegmentRecord(timestamp:470,flag:91,payload:try NativeAggregates.backlightPayload(470,false)),
+                          SegmentRecord(state:2,timestamp:480,payload:Data([123]))]
+        let laterData = try Segment(created:1,flags:23,reserved:456,size:8192,records:firstLater).encoded()
+        let beforeFirst = try Segment.parse(NativeAggregates.backlight(laterData,history:firstLater,request:request,now:500))
+        try check(beforeFirst.records.suffix(3).map(\.payload) == firstLater.map(\.payload) &&
+                  beforeFirst.records.suffix(3).map(\.flag) == firstLater.map(\.flag),
+                  "actual missing-boundary shape preserves all later native and opaque records")
+        try check(beforeFirst.created == 1 && beforeFirst.flags == 23 && beforeFirst.reserved == 456 &&
+                  beforeFirst.size == 8192,"missing-boundary synthesis preserves segment envelope")
+        let clearBlank = try Segment.parse(NativeAggregates.backlight(blank,history:[],request:empty,now:500))
+        try check(clearBlank.records.map(\.timestamp) == [100,400] &&
+                  clearBlank.records.allSatisfy { (try? NativeAggregates.backlightState($0)) == false },
+                  "empty edit without original history remains closed off")
+        let opaqueEnd = SegmentRecord(state:2,timestamp:400,payload:Data([123]))
+        try rejects("unknown exact closing boundary conflicts with synthesis") {
+            _ = try NativeAggregates.backlight(laterData,history:firstLater+[opaqueEnd],request:request,now:500)
+        }
+        let opaqueInside = SegmentRecord(state:2,timestamp:200,payload:Data([123]))
+        try rejects("missing boundary never bypasses unknown interval schema") {
+            _ = try NativeAggregates.backlight(laterData,history:firstLater+[opaqueInside],request:request,now:500)
+        }
+        let overlapDay = ApplyRequest(start:1000,end:87400,sessions:[
+            StoredSession(bundle:"com.example.a",start:4600,end:46000),
+            StoredSession(bundle:"com.example.b",start:4600,end:85540),
+            StoredSession(bundle:"com.example.c",start:4600,end:85360)],revision:revision)
+        let futureOverlap = try Segment.parse(NativeAggregates.backlight(blank,history:[],request:overlapDay,now:5000))
+        try check(overlapDay.sessions.reduce(0.0) { $0+$1.end-$1.start } > 86400,
+                  "overlapping app total exceeds 24 hours intentionally")
+        try check(futureOverlap.records.map(\.timestamp) == [1000,4600,85540,87400],
+                  "future long union is not clamped to now or app sum")
+        try check(try futureOverlap.records.map { try NativeAggregates.backlightState($0) } == [false,true,false,false],
+                  "future missing-boundary union is explicitly closed")
         try rejects("unknown protobuf schema") {
             _ = try NativeAggregates.backlight(original,history:[SegmentRecord(timestamp:1,payload:Data([8,1]))],request:empty,now:500)
         }

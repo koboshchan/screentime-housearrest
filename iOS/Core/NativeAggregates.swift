@@ -63,8 +63,13 @@ enum NativeAggregates {
         try requireStorage(!history.contains { $0.state != 1 && $0.timestamp >= request.start && $0.timestamp < request.end },
                            "Opaque Backlight event intersects edit; nothing applied.","unsupported_schema")
         let boundary = active.last { $0.timestamp <= request.end }
-        if request.end <= now {
-            try requireStorage(boundary != nil,"Unknown original Backlight boundary; nothing applied.","unsupported_schema")
+        // An edit may precede the first retained native event (or extend
+        // beyond an empty stream). There is then no original state to restore.
+        // Synthesize a CLOSED interval, never an unbounded assumed on-state.
+        // Existing future/outside events remain authoritative and unchanged.
+        if boundary == nil {
+            try requireStorage(!history.contains { $0.state != 1 && $0.timestamp == request.end },
+                               "Opaque Backlight event conflicts with synthetic boundary; nothing applied.","unsupported_schema")
         }
         segment.records.removeAll { $0.timestamp >= request.start && $0.timestamp < request.end }
         segment.records.append(SegmentRecord(timestamp:request.start,payload:try backlightPayload(request.start,false)))
@@ -76,6 +81,8 @@ enum NativeAggregates {
         // future-midnight "on" would invent future screen use.
         if request.end <= now, let boundary {
             segment.records.append(SegmentRecord(timestamp:request.end,payload:try backlightPayload(request.end,backlightState(boundary))))
+        } else if boundary == nil {
+            segment.records.append(SegmentRecord(timestamp:request.end,payload:try backlightPayload(request.end,false)))
         }
         // Overlay only proven preserved usage, leaving all other outside state
         // and opaque records byte-for-byte intact. Restore the original state

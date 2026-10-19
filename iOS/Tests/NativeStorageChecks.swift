@@ -449,6 +449,41 @@ import Darwin
         try check(try fullStore.verifyBackup(bothBackup) == bothRevision,"absence archive remains verified")
         try FileManager.default.removeItem(at:cache)
         try AppTotalFixtures.create(cache)
+        // Match the live blocker: retained native events begin AFTER the
+        // selected edit. Planning must synthesize a closed missing boundary,
+        // while production Apply still verifies a current backup before writes.
+        let laterNative = [
+            SegmentRecord(timestamp:90000,flag:77,payload:try NativeAggregates.backlightPayload(90000,true)),
+            SegmentRecord(timestamp:90100,flag:91,payload:try NativeAggregates.backlightPayload(90100,false))]
+        let missingBoundaryBytes = try Segment(created:-200,size:8192,records:laterNative).encoded()
+        try fullStore.writeExisting(backlightPath,original:boundedBytes(backlightPath),replacement:missingBoundaryBytes)
+        let missingRevision = try fullStore.fingerprint()
+        let missingPlan = try fullStore.prepareBacklight(ApplyRequest(start:0,end:86400,sessions:[],revision:missingRevision))
+        try check(missingPlan.count == 1 && missingPlan[0].1 == missingBoundaryBytes,
+                  "production planner accepts actual missing-boundary shape without changing original")
+        try check(try fullStore.fingerprint() == missingRevision,"missing-boundary preparation is read only")
+        let beforeMissingUsage = try boundedBytes(usagePath), beforeMissingLocks = try boundedBytes(lockPath)
+        let beforeMissingDB = try sqliteState(parityDB), beforeMissingCalls = calls.count
+        let beforeMissingArchives = Set(try FileManager.default.contentsOfDirectory(atPath:fullStore.backups.path))
+        fullStore.afterBackup = {
+            let folders = try FileManager.default.contentsOfDirectory(at:fullStore.backups,includingPropertiesForKeys:nil)
+            for folder in folders where !beforeMissingArchives.contains(folder.lastPathComponent) {
+                let archive = folder.appendingPathComponent("backlight-native-display")
+                guard FileManager.default.fileExists(atPath:archive.path) else { continue }
+                var bytes = try boundedBytes(archive)
+                bytes[40] ^= 1
+                let fd = open(archive.path,O_WRONLY)
+                _ = bytes.withUnsafeBytes { pwrite(fd,$0.baseAddress,$0.count,0) }; close(fd)
+            }
+        }
+        try rejects("missing-boundary Apply refuses unverified corrupt backup before any writes") {
+            _ = try fullStore.apply(ApplyRequest(start:0,end:86400,sessions:[],revision:missingRevision))
+        }
+        fullStore.afterBackup = nil
+        try check(try fullStore.fingerprint() == missingRevision &&
+                  boundedBytes(usagePath) == beforeMissingUsage && boundedBytes(lockPath) == beforeMissingLocks &&
+                  sqliteState(parityDB) == beforeMissingDB && calls.count == beforeMissingCalls,
+                  "missing-boundary synthesis cannot write or refresh before verified backup")
         let preBacklightRace = try boundedBytes(backlightPath)
         let preUsageRace = try boundedBytes(usagePath)
         let raceRevision = try fullStore.fingerprint()
@@ -535,6 +570,12 @@ import Darwin
         let restoreFD = open(archivedBacklight.path,O_WRONLY)
         _ = archiveBytes.withUnsafeBytes { pwrite(restoreFD,$0.baseAddress,$0.count,0) }; close(restoreFD)
         let nativeBacklight = try Segment.parse(boundedBytes(backlightPath))
+        try check(nativeBacklight.records.filter { $0.timestamp >= 90000 }.map(\.payload) == laterNative.map(\.payload) &&
+                  nativeBacklight.records.filter { $0.timestamp >= 90000 }.map(\.flag) == laterNative.map(\.flag),
+                  "shipping missing-boundary Apply preserves outside native records exactly")
+        try check(archiveBytes == missingBoundaryBytes,"verified prewrite archive retains missing-boundary original bytes")
+        try check(nativeBacklight.records.contains { $0.timestamp == 86400 && (try? NativeAggregates.backlightState($0)) == false },
+                  "shipping missing-boundary Apply closes synthesized interval")
         try check(nativeBacklight.records.contains { $0.timestamp == 60 && (try? NativeAggregates.backlightState($0)) == true },"native backlight session on")
         _ = try parityStore.fingerprint() // Patched Local roots remain fingerprinted and backed up.
         let response = try StorageProtocol.handle(HelperRequest(op:.read),storage:store)
