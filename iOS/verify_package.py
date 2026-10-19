@@ -13,7 +13,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 KEYS = ("platform-application", "com.apple.private.security.no-sandbox",
         "com.apple.private.security.storage.AppBundles",
-        "com.apple.private.security.storage.AppDataContainers")
+        "com.apple.private.security.storage.AppDataContainers",
+        "com.apple.private.security.storage-exempt.heritable")
 
 def command(*args):
     return subprocess.check_output(args)
