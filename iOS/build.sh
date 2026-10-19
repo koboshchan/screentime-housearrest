@@ -27,6 +27,8 @@ xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -D HOST_IPC_TES
 xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -parse-as-library Core/*.swift App/UsageDates.swift App/Store.swift Tests/LossyApplyChecks.swift -framework SwiftUI -framework CryptoKit -lsqlite3 -lz -o "$OUT/lossy-apply-checks"
 "$OUT/lossy-apply-checks"
 xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -parse-as-library Core/*.swift App/UsageDates.swift App/Store.swift Tests/DateSelectionChecks.swift -framework SwiftUI -framework CryptoKit -lsqlite3 -lz -o "$OUT/date-selection-checks"
+xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -parse-as-library Core/*.swift App/UsageDates.swift App/Store.swift Tests/SessionSelectionChecks.swift -framework SwiftUI -framework CryptoKit -lsqlite3 -lz -o "$OUT/session-selection-checks"
+"$OUT/session-selection-checks"
 "$OUT/date-selection-checks"
 python3 Tests/check_scaffold.py
 # Exercise the production C sanitizer with a real Darwin environ vector.

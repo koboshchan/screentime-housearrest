@@ -25,6 +25,39 @@ final class Store: ObservableObject {
         reload()
     }
 
+    @Published var selectingSessions = false
+    @Published var selectedSessions: Set<UUID> = []
+    @Published var showDeleteConfirmation = false
+    private var pendingDeletion: Set<UUID> = []
+
+    func finishSelectingSessions() {
+        selectingSessions = false
+        selectedSessions = []
+        pendingDeletion = []
+        showDeleteConfirmation = false
+    }
+    func requestSessionDeletion(_ ids: Set<UUID>) {
+        guard loaded && !busy else { return }
+        pendingDeletion = ids.intersection(Set(sessions.map(\.id)))
+        showDeleteConfirmation = !pendingDeletion.isEmpty
+    }
+    func cancelSessionDeletion() {
+        pendingDeletion = []
+        showDeleteConfirmation = false
+    }
+    func confirmSessionDeletion() {
+        guard loaded && !busy && showDeleteConfirmation else {
+            cancelSessionDeletion()
+            return
+        }
+        let ids = pendingDeletion
+        sessions.removeAll { ids.contains($0.id) }
+        if let selected, ids.contains(selected) { self.selected = nil }
+        selectedSessions.subtract(ids)
+        cancelSessionDeletion()
+        status = "Deleted from your draft. Tap Apply to change device usage."
+    }
+
     @Published var sessions: [UsageSession] = []
     @Published var capability: Capability = .unknown("Checking.")
     @Published var error: String?
@@ -52,7 +85,7 @@ final class Store: ObservableObject {
         if loaded { return "Showing usage for the selected date as stored on this device. Nothing changes until you tap Apply, and a verified backup is made first." }
         return "Existing usage has not been read. Composed sessions stay in memory only; closing the app discards them."
     }
-    var canApply: Bool { capability.canApply && loaded && revision != nil && !busy && !sessions.isEmpty }
+    var canApply: Bool { capability.canApply && loaded && revision != nil && !busy }
 
     func refreshCapability() {
         guard !busy else { return }
@@ -72,6 +105,7 @@ final class Store: ObservableObject {
         let ds = interval.start.timeIntervalSinceReferenceDate
         let de = interval.end.timeIntervalSinceReferenceDate
         // Never leave an old day's draft/revision available after a failed read.
+        finishSelectingSessions()
         loaded = false; revision = nil; sessions = []; selected = nil
         error = nil; status = nil; warnings = []
         showStale = false; showLossyConfirmation = false; pendingSourceOverride = false

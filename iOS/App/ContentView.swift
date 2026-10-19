@@ -6,14 +6,14 @@ struct ContentView: View {
 
     var body: some View {
         NavigationView {
-            List {
+            List(selection: $store.selectedSessions) {
                 Section(footer: Text("Choose today or any of the previous 14 days. Switching dates discards unsaved edits.")) {
                     DatePicker("Date", selection: Binding(
                         get: { store.selectedDate },
                         set: { store.selectDate($0) }
                     ), in: store.dateRange, displayedComponents: .date)
                     .datePickerStyle(.compact)
-                    .disabled(store.busy)
+                    .disabled(store.busy || store.selectingSessions)
                     .accessibilityIdentifier("usageDatePicker")
                 }
                 Section {
@@ -21,14 +21,23 @@ struct ContentView: View {
                 }
                 if !store.sessions.isEmpty {
                     Section(header: Text("Timeline")) {
-                        TimelineView(store: store).frame(height: 230).listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+                        TimelineView(store: store).disabled(store.selectingSessions || store.busy).frame(height: 230).listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
                     }
                     Section(header: Text("Sessions"), footer: Text("Total \(formatDuration(SessionRules.rawTotal(store.sessions))), screen on \(formatDuration(SessionRules.screenOnTotal(store.sessions)))")) {
                         ForEach(store.sessions) { s in
-                            NavigationLink(destination: SessionEditor(store: store, session: s)) {
-                                HStack { AppLabel(bundleID: s.bundleID); Spacer(); Text("\(formatHM(s.start)) to \(formatHM(s.end))").foregroundColor(.secondary).monospacedDigit() }
+                            Group {
+                                if store.selectingSessions {
+                                    sessionRow(s)
+                                } else {
+                                    NavigationLink(destination: SessionEditor(store: store, session: s)) {
+                                        sessionRow(s)
+                                    }
+                                }
                             }
-                        }.onDelete { for i in $0 { store.delete(store.sessions[i].id) } }
+                            .tag(s.id)
+                        }.onDelete { offsets in
+                            store.requestSessionDeletion(Set(offsets.map { store.sessions[$0].id }))
+                        }
                     }
                 }
                 if let e = store.error { Section { Text(e).foregroundColor(.red) } }
@@ -38,12 +47,44 @@ struct ContentView: View {
                 }
                 Section {
                     Button("Reload from device") { store.reload() }.disabled(store.busy || !store.capability.canApply)
-                    Button("Apply") { store.apply() }.disabled(!store.canApply)
+                    Button("Apply") { store.apply() }.disabled(!store.canApply || store.selectingSessions)
                 }
             }
             .navigationTitle("Usage")
             .environment(\.timeZone, .autoupdatingCurrent)
-            .toolbar { Button { showingAdd = true } label: { Image(systemName: "plus") }.disabled(store.busy || !store.loaded) }
+            .environment(\.editMode, Binding(
+                get: { store.selectingSessions ? .active : .inactive },
+                set: { if $0 == .inactive { store.finishSelectingSessions() } }
+            ))
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(store.selectingSessions ? "Done" : "Select") {
+                        if store.selectingSessions { store.finishSelectingSessions() }
+                        else { store.selectingSessions = true }
+                    }
+                    .disabled(store.busy || !store.loaded || (!store.selectingSessions && store.sessions.isEmpty))
+                    .accessibilityIdentifier("selectSessions")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showingAdd = true } label: { Image(systemName: "plus") }
+                        .disabled(store.busy || !store.loaded || store.selectingSessions)
+                }
+                ToolbarItem(placement: .bottomBar) {
+                    if store.selectingSessions {
+                        Button("Delete selected (\(store.selectedSessions.count))", role: .destructive) {
+                            store.requestSessionDeletion(store.selectedSessions)
+                        }
+                        .disabled(store.busy || store.selectedSessions.isEmpty)
+                        .accessibilityIdentifier("deleteSelectedSessions")
+                    }
+                }
+            }
+            .confirmationDialog("Delete selected sessions?", isPresented: $store.showDeleteConfirmation, titleVisibility: .visible) {
+                Button("Delete", role: .destructive) { store.confirmSessionDeletion() }
+                Button("Cancel", role: .cancel) { store.cancelSessionDeletion() }
+            } message: {
+                Text("This only changes your draft. Device usage stays unchanged until you tap Apply.")
+            }
             .sheet(isPresented: $showingAdd) { NavigationStack { SessionEditor(store: store, session: nil) } }
         }
         .navigationViewStyle(StackNavigationViewStyle())
@@ -61,6 +102,15 @@ struct ContentView: View {
             Text("Usage on this device changed after you loaded it. Cancel keeps your edits unsaved. Reload discards them and reads the current usage. Override writes your edits over the newer changes, after a fresh verified backup of the current data.")
         }
         .onAppear { store.refreshCapability() }
+    }
+
+    private func sessionRow(_ session: UsageSession) -> some View {
+        HStack {
+            AppLabel(bundleID: session.bundleID)
+            Spacer()
+            Text("\(formatHM(session.start)) to \(formatHM(session.end))")
+                .foregroundColor(.secondary).monospacedDigit()
+        }
     }
 }
 
