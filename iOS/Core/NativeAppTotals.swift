@@ -6,6 +6,14 @@ import Darwin
 /// Native adaptation of the Gemini DeviceActivity cache bypass. Never imports
 /// proof data or synthesizes sample usage: durations come only from Apply.
 enum NativeAppTotals {
+    /// The 18.3 beta refresh path constructs DateInterval(start: future, end: now)
+    /// instead of returning like the verified 18.6.2 path. Do not write a hold
+    /// on older, unverified iOS 18 builds or silently allow refresh to erase edits.
+    static func requireSafeFutureRefresh(_ version: OperatingSystemVersion) throws {
+        try requireStorage(!(version.majorVersion == 18 && version.minorVersion < 6),
+            "This iOS 18 build cannot safely hold DeviceActivity refresh. Future refresh metadata can crash Settings. Nothing applied. A compatible refresh strategy is required.",
+            "unsupported_refresh")
+    }
     struct SegmentValue {
         var document: [String: Any]
         var value: [String: Any]
@@ -101,11 +109,16 @@ enum NativeAppTotals {
             } else {
                 var category = template.category
                 category["applicationActivities"] = [entry]; category["webDomainActivities"] = [[String: Any]]()
-                // No native category aggregate exists in this segment. Do not
-                // invent or copy a different interval's category total.
-                category["totalActivityDuration"] = 0.0
                 categories.append(category)
             }
+        }
+        // Keep every displayed aggregate on the same apps-only policy. Native
+        // web payloads remain intact, but are not added a second time.
+        for i in categories.indices {
+            let entries = categories[i]["applicationActivities"] as! [[String: Any]]
+            let amount = try entries.reduce(0.0) { try $0 + seconds($1["totalActivityDuration"]) }
+            try requireStorage(amount.isFinite, "DeviceActivity category sum overflow.", "invalid_input")
+            categories[i]["totalActivityDuration"] = amount
         }
         var sum = 0.0
         for amount in totals.values { sum += try seconds(amount) }
@@ -376,6 +389,7 @@ extension NativeStorage {
     /// All cache planning and schema checks happen BEFORE the verified backup.
     /// Missing/ambiguous layouts fail closed rather than falling back to a union.
     func prepareAppTotals(_ request: ApplyRequest, now: Date = Date()) throws -> [NativeCacheWrite] {
+        try NativeAppTotals.requireSafeFutureRefresh(ProcessInfo.processInfo.operatingSystemVersion)
         let roots = try cacheRoots()
         try requireStorage(roots.count == 1, "Expected one local DeviceActivity cache. Open Settings Screen Time, then reload.", "unsupported_schema")
         let root = roots[0]

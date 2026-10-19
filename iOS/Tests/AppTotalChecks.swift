@@ -40,7 +40,10 @@ import Darwin
             var x = x, y = y
             let xa = x.removeValue(forKey:"applicationActivities") as! [[String:Any]]
             let ya = y.removeValue(forKey:"applicationActivities") as! [[String:Any]]
-            try check(try bytes(x) == bytes(y), "native category aggregate and all unrelated category fields byte-identical")
+            let sum = try ya.reduce(0.0) { try $0 + NativeAppTotals.seconds($1["totalActivityDuration"]) }
+            try check(try NativeAppTotals.seconds(y["totalActivityDuration"]) == sum, "category total equals apps-only sum including overlap")
+            x.removeValue(forKey:"totalActivityDuration"); y.removeValue(forKey:"totalActivityDuration")
+            try check(try bytes(x) == bytes(y), "web data and unrelated category fields byte-identical")
             for (u,v) in zip(xa,ya) {
                 var u = u, v = v
                 u.removeValue(forKey:"totalActivityDuration"); v.removeValue(forKey:"totalActivityDuration")
@@ -52,6 +55,12 @@ import Darwin
         try check(try bytes(av) == bytes(bv), "unrelated segment fields byte-identical")
     }
     static func main() throws {
+        for minor in 0...5 {
+            try rejects("older iOS 18 refuses unsafe future refresh") {
+                try NativeAppTotals.requireSafeFutureRefresh(OperatingSystemVersion(majorVersion:18,minorVersion:minor,patchVersion:0))
+            }
+        }
+        try NativeAppTotals.requireSafeFutureRefresh(OperatingSystemVersion(majorVersion:18,minorVersion:6,patchVersion:2))
         NSTimeZone.default = TimeZone(secondsFromGMT:0)!
         let rev = String(repeating:"0",count:64)
         let request = ApplyRequest(start:0,end:86400,sessions:[
@@ -63,10 +72,27 @@ import Darwin
         let changed = try NativeAppTotals.replacing(parsed,totals:NativeAppTotals.durations(request,start:0,end:86400),catalog:catalog)
         try check(try total(changed) == 14400,"overlapping 2h+2h equals 4h")
         try assertCategories(original,changed)
+        let cats = try NativeAppTotals.SegmentValue(changed).value["categoryActivities"] as! [[String:Any]]
+        try check(try cats.reduce(0.0) { try $0 + NativeAppTotals.seconds($1["totalActivityDuration"]) } == total(changed),"displayed category sum matches segment total, excluding web duplicates")
+        var sameDoc = parsed.document, sameValue = parsed.value
+        var sameCats = sameValue["categoryActivities"] as! [[String:Any]]
+        sameCats[0]["applicationActivities"] = (sameCats[0]["applicationActivities"] as! [[String:Any]]) + (sameCats[1]["applicationActivities"] as! [[String:Any]])
+        sameCats.removeLast(); sameValue["categoryActivities"] = sameCats; sameDoc["value"] = sameValue
+        let sameBytes = try AppTotalFixtures.bytes(sameDoc)
+        let same = try NativeAppTotals.replacing(NativeAppTotals.SegmentValue(sameBytes),totals:[AppTotalFixtures.a:86400,AppTotalFixtures.b:86400],catalog:catalog)
+        let sameOut = try NativeAppTotals.SegmentValue(same).value["categoryActivities"] as! [[String:Any]]
+        try check(try NativeAppTotals.seconds(sameOut[0]["totalActivityDuration"]) == 172800,"same-category two overlapping apps sum to 48h, not union or cap")
+        try assertCategories(sameBytes,same)
+        let emptyHour = try NativeAppTotals.blank(parsed,start:0,duration:3600)
+        let introduced = try NativeAppTotals.synthesized(emptyHour,totals:[AppTotalFixtures.a:3600,AppTotalFixtures.b:3600],catalog:catalog)
+        let introducedCats = try NativeAppTotals.SegmentValue(introduced).value["categoryActivities"] as! [[String:Any]]
+        try check(introducedCats.count == 2,"trusted categories introduced into empty hour")
+        try check(try introducedCats.allSatisfy { try NativeAppTotals.seconds($0["totalActivityDuration"]) == 3600 },"new categories no longer have zero totals")
+        try check(try total(introduced) == 7200,"new hour retains overlapping app sum")
         let keepB = try NativeAppTotals.replacing(parsed,totals:[AppTotalFixtures.a:7200,AppTotalFixtures.b:100],catalog:catalog)
-        let oldCats = parsed.value["categoryActivities"] as! [[String:Any]]
+        try assertCategories(original,keepB)
         let newCats = try NativeAppTotals.SegmentValue(keepB).value["categoryActivities"] as! [[String:Any]]
-        try check(try bytes(oldCats[1]) == bytes(newCats[1]),"unaffected category entirely byte-identical")
+        try check(try NativeAppTotals.seconds(newCats[1]["totalActivityDuration"]) == 100,"unchanged app still repairs stale category aggregate")
         for amounts in [[AppTotalFixtures.a:1.25],[:],[AppTotalFixtures.a:86400,AppTotalFixtures.b:86400]] {
             let output = try NativeAppTotals.replacing(parsed,totals:amounts,catalog:catalog)
             try check(try total(output) == amounts.values.reduce(0,+),"exact fractional/zero/48h apps-only total")
@@ -275,6 +301,6 @@ import Darwin
         try outsideStore.writeExisting(laterHourMeta,original:hourBefore,replacement:AppTotalFixtures.bytes(hourDoc))
         try check(try outsideStore.prepareAppTotals(outsideRequest,now:outsideNow).count == 29,
             "coherent fully covered Cloud snapshot survives independently newer Local Hourly")
-        print("PASS native preserve-category production planner \(count) checks; disposable fixtures only, no planning bypass")
+        print("PASS native summed-category production planner \(count) checks; disposable fixtures only, no planning bypass")
     }
 }

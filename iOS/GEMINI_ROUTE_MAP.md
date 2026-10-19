@@ -113,3 +113,8 @@ Apply/weekly deltas, new buckets, future-metadata preservation, malformed data,
 symlink/concurrent-file rejection, DST days, and production Apply with mandatory
 backup and revision race detection. No live install or Settings verification of
 this packaged integration has been performed.
+
+
+### Older iOS 18 compatibility gate
+
+The future-date hold is not compatible with the XS Max iOS 18.3 beta 22D5034e refresh implementation. Apply and cache planning refuse iOS 18.0–18.5 before backup or mutation. This prevents new crash-causing holds; it does not repair existing cache metadata or claim functional Apply support on those builds. See NATIVE_CACHE_SYNTHESIS.md for the exact UUID-matched crash evidence.
