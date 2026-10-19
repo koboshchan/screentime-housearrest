@@ -56,14 +56,14 @@ int ste_authorize_caller(void) {
     if (parent <= 1) return 0;
     char caller[PATH_MAX], resolved[PATH_MAX], self[PATH_MAX], resolved_self[PATH_MAX];
     uint32_t size = sizeof(self);
-    if (_NSGetExecutablePath(self,&size) || !realpath(self,resolved_self)) return 0;
+    if (_NSGetExecutablePath(self,&size) || !realpath(self,resolved_self) || !trusted_path(resolved_self)) return 0;
     if (proc_pidpath(parent,caller,sizeof(caller)) <= 0 || !realpath(caller,resolved)) return 0;
     char *slash = strrchr(resolved_self,'/');
     if (!slash || strcmp(slash+1,"stehelper")) return 0;
     *slash = 0;
     char expected[PATH_MAX];
     if (snprintf(expected,sizeof(expected),"%s/ScreenTimeEditor",resolved_self) >= sizeof(expected)) return 0;
-    if (strcmp(expected,resolved) || !trusted_path(resolved) || !trusted_path(self)) return 0;
+    if (strcmp(expected,resolved) || !trusted_path(resolved)) return 0;
     uint8_t hash[20], second[20]; uint32_t flags = 0;
     if (csops(parent,0,&flags,sizeof(flags)) || !(flags & 1) || csops(parent,5,hash,sizeof(hash))) return 0;
     char hex[41];
