@@ -6,14 +6,6 @@ import Darwin
 /// Native adaptation of the Gemini DeviceActivity cache bypass. Never imports
 /// proof data or synthesizes sample usage: durations come only from Apply.
 enum NativeAppTotals {
-    /// The 18.3 beta refresh path constructs DateInterval(start: future, end: now)
-    /// instead of returning like the verified 18.6.2 path. Do not write a hold
-    /// on older, unverified iOS 18 builds or silently allow refresh to erase edits.
-    static func requireSafeFutureRefresh(_ version: OperatingSystemVersion) throws {
-        try requireStorage(!(version.majorVersion == 18 && version.minorVersion < 6),
-            "This iOS 18 build cannot safely hold DeviceActivity refresh. Future refresh metadata can crash Settings. Nothing applied. A compatible refresh strategy is required.",
-            "unsupported_refresh")
-    }
     struct SegmentValue {
         var document: [String: Any]
         var value: [String: Any]
@@ -389,7 +381,6 @@ extension NativeStorage {
     /// All cache planning and schema checks happen BEFORE the verified backup.
     /// Missing/ambiguous layouts fail closed rather than falling back to a union.
     func prepareAppTotals(_ request: ApplyRequest, now: Date = Date()) throws -> [NativeCacheWrite] {
-        try NativeAppTotals.requireSafeFutureRefresh(ProcessInfo.processInfo.operatingSystemVersion)
         let roots = try cacheRoots()
         try requireStorage(roots.count == 1, "Expected one local DeviceActivity cache. Open Settings Screen Time, then reload.", "unsupported_schema")
         let root = roots[0]

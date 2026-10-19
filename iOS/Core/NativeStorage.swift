@@ -385,6 +385,7 @@ public final class NativeStorage {
         var pids = [Int32](repeating:0,count:Int(count)+1024)
         let actual = pids.withUnsafeMutableBytes { list($0.baseAddress,Int32($0.count)) }
         try requireStorage(actual >= 0 && actual <= pids.count,"Process inventory changed.","refresh_failed")
+        var signalled: [(Int32, String)] = []
         for pid in pids.prefix(Int(actual)) where pid > 1 && pid != getpid() {
             var bytes = [CChar](repeating:0,count:1024)
             let length = bytes.withUnsafeMutableBytes { name(pid,$0.baseAddress,UInt32($0.count)) }
@@ -396,8 +397,27 @@ public final class NativeStorage {
                 let checked = again.withUnsafeMutableBytes { name(pid,$0.baseAddress,UInt32($0.count)) }
                 try requireStorage(checked > 0 && String(cString:again) == process,"Refresh process changed.","refresh_failed")
                 try requireStorage(kill(pid,SIGTERM) == 0 || errno == ESRCH,"Cannot stop UI process.","refresh_failed")
+                signalled.append((pid,process))
             }
         }
+        // SIGTERM is asynchronous. Do not acknowledge Apply while an old agent
+        // or Settings process is still alive. Only observe the original PIDs;
+        // never repeatedly signal a launchd replacement or unrelated process.
+        try RefreshExitBarrier.wait(signalled,stillRunning: { pid, process in
+            if kill(pid,0) != 0 {
+                if errno == ESRCH { return false }
+                throw StorageFailure("refresh_failed","Cannot inspect signalled process.")
+            }
+            var bytes = [CChar](repeating:0,count:1024)
+            let length = bytes.withUnsafeMutableBytes { name(pid,$0.baseAddress,UInt32($0.count)) }
+            if length <= 0 {
+                if kill(pid,0) != 0 && errno == ESRCH { return false }
+                throw StorageFailure("refresh_failed","Cannot confirm signalled process exit.")
+            }
+            // A reused PID with a different name no longer represents the old
+            // target. Same-name reuse conservatively times out, never re-kills.
+            return String(cString:bytes) == process
+        },pause: { usleep(20_000) })
     }
     func lockSegments() throws -> [URL] {
         guard let lockStream else { return [] }

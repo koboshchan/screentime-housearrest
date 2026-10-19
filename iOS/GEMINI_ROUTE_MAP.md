@@ -114,7 +114,8 @@ symlink/concurrent-file rejection, DST days, and production Apply with mandatory
 backup and revision race detection. No live install or Settings verification of
 this packaged integration has been performed.
 
+The blanket iOS 18.0–18.5 Apply denial was removed at Lucas's request. He reports that Apply and Settings worked on this XS Max 18.3, and that a later immediate Settings crash clears after lock/unlock. That recovery does not establish the crash cause.
 
-### Older iOS 18 compatibility gate
+Post-write refresh already signals Preferences, ScreenTimeSettingsAgent, ScreenTimeAgent, UsageTrackingAgent and biomed. It now waits a bounded number of probes (101, spaced 20ms apart) for the signalled PIDs to disappear or change names, rather than acknowledging the signal itself as completion. Probe errors and exit timeouts return refresh failure, which Apply reports with the verified backup ID as a partial Apply failure. No replacement process is signalled during this wait. The same-name PID-reuse case conservatively times out.
 
-The future-date hold is not compatible with the XS Max iOS 18.3 beta 22D5034e refresh implementation. Apply and cache planning refuse iOS 18.0–18.5 before backup or mutation. This prevents new crash-causing holds; it does not repair existing cache metadata or claim functional Apply support on those builds. See NATIVE_CACHE_SYNTHESIS.md for the exact UUID-matched crash evidence.
+Exit acknowledgement is not a cache-ready handshake, does not reproduce lock/unlock, and is not proof that the transient Settings crash is fixed. Synthetic barrier tests cover immediate exit, delayed exit, timeout, probe failure, multiple PIDs and invalid bounds. Live crash diagnosis still requires saved cache comparison and native Settings verification. No live Apply was performed for this revision.

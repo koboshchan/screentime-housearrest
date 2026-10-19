@@ -55,12 +55,6 @@ import Darwin
         try check(try bytes(av) == bytes(bv), "unrelated segment fields byte-identical")
     }
     static func main() throws {
-        for minor in 0...5 {
-            try rejects("older iOS 18 refuses unsafe future refresh") {
-                try NativeAppTotals.requireSafeFutureRefresh(OperatingSystemVersion(majorVersion:18,minorVersion:minor,patchVersion:0))
-            }
-        }
-        try NativeAppTotals.requireSafeFutureRefresh(OperatingSystemVersion(majorVersion:18,minorVersion:6,patchVersion:2))
         NSTimeZone.default = TimeZone(secondsFromGMT:0)!
         let rev = String(repeating:"0",count:64)
         let request = ApplyRequest(start:0,end:86400,sessions:[

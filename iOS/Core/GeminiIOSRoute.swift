@@ -37,9 +37,27 @@ enum GeminiIOSRoute {
 
 }
 
+/// Bounded acknowledgement of old process exit, not of cache reload readiness.
+/// Injectable probes make timeout/error behavior testable without signalling.
+enum RefreshExitBarrier {
+    static func wait(_ processes: [(Int32, String)],
+                     stillRunning: (Int32, String) throws -> Bool,
+                     pause: () -> Void,
+                     attempts: Int = 101) throws {
+        try requireStorage(attempts > 0, "Invalid refresh wait.", "refresh_failed")
+        var pending = processes
+        for attempt in 0..<attempts {
+            pending = try pending.filter { try stillRunning($0.0, $0.1) }
+            if pending.isEmpty { return }
+            if attempt + 1 < attempts { pause() }
+        }
+        throw StorageFailure("refresh_failed",
+            "Signalled Screen Time processes did not exit in time. Reload was not confirmed.")
+    }
+}
+
 extension NativeStorage {
     public func apply(_ request: ApplyRequest) throws -> HelperReply {
-        try NativeAppTotals.requireSafeFutureRefresh(ProcessInfo.processInfo.operatingSystemVersion)
         try validClock(request.start); try validClock(request.end)
         try requireStorage(request.start < request.end && request.end-request.start <= 90000 && request.sessions.count <= 10000 && request.revision.count == 64,"Invalid edit interval.","invalid_input")
         for session in request.sessions {
