@@ -475,6 +475,42 @@ public final class NativeStorage {
             if lstat(root.path,&st) == 0 {
                 try requireStorage(st.st_mode & S_IFMT == S_IFDIR,"Cache root is not a directory.","unsafe_path")
                 roots += 1; try walk(root,"cache-\(i)")
+                for key in ["LocalFirstWeekday.plist","LocalTimeZone.plist"] {
+                    let path = root.deletingLastPathComponent().appendingPathComponent(key)
+                    try rejectLinks(path); var info = stat()
+                    if lstat(path.path,&info) == 0 {
+                        try requireStorage(info.st_mode & S_IFMT == S_IFREG && info.st_nlink == 1,
+                            "Unsafe native calendar file.","unsafe_path")
+                        files.append(("cache-\(i)-" + key,path))
+                    } else {
+                        try requireStorage(errno == ENOENT,"Cannot inspect native calendar file.","read_failed")
+                        absent.append(("cache-\(i)-" + key,path))
+                    }
+                }
+                let hourly = root.appendingPathComponent("Hourly/ActivitySegments")
+                if directories.contains(where: { $0.1 == hourly }) {
+                    let calendar = try cacheCalendar(root)
+                    var days = Set<Double>(), weeks = Set<Double>()
+                    let dailyDirectory = root.appendingPathComponent("Daily/ActivitySegments")
+                    for (_, path) in files where (path.deletingLastPathComponent() == hourly ||
+                        path.deletingLastPathComponent() == dailyDirectory) && path.pathExtension == "plist" {
+                        let segment = try NativeAppTotals.SegmentValue(boundedBytes(path))
+                        let date = Date(timeIntervalSinceReferenceDate:segment.start)
+                        days.insert(calendar.startOfDay(for:date).timeIntervalSinceReferenceDate)
+                        if let week = calendar.dateInterval(of:.weekOfYear,for:date) { weeks.insert(week.start.timeIntervalSinceReferenceDate) }
+                    }
+                    var relativePaths = ["Daily/Metadata.plist","Weekly/Metadata.plist"]
+                    relativePaths += days.sorted().map { "Daily/ActivitySegments/" + String(format:"%.1f.plist",$0) }
+                    relativePaths += weeks.sorted().map { "Weekly/ActivitySegments/" + String(format:"%.1f.plist",$0) }
+                    for relative in relativePaths {
+                        let path = root.appendingPathComponent(relative)
+                        try rejectLinks(path); var info = stat()
+                        if lstat(path.path,&info) != 0 {
+                            try requireStorage(errno == ENOENT,"Cannot inspect cache absence.","read_failed")
+                            absent.append(("cache-\(i)/" + relative,path))
+                        }
+                    }
+                }
             } else {
                 try requireStorage(errno == ENOENT,"Cannot inspect cache root.","read_failed")
                 absent.append(("cache-\(i)",root))

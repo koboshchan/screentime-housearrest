@@ -382,6 +382,60 @@ import Darwin
         try privateWrite(Segment(created:-200,size:8192,records:[SegmentRecord(timestamp:-100,payload:NativeAggregates.backlightPayload(-100,true))]).encoded(),backlightPath)
         let fullStore = NativeStorage(database:parityDB,stream:usageDir,backups:parity.appendingPathComponent("Backups"),lockStream:lockDir,backlightStream:backlightDir,groupRoot:groups,runner:{ calls.append($0) })
         try AppTotalFixtures.create(cache)
+        let absentDailyPath = cache.appendingPathComponent("Daily/ActivitySegments/0.0.plist")
+        try FileManager.default.removeItem(at:absentDailyPath)
+        let absentDailyRevision = try fullStore.fingerprint()
+        let absentDailyBackup = try fullStore.backup()
+        let absentArchive = parity.appendingPathComponent("Backups").appendingPathComponent(absentDailyBackup)
+        let absentManifest = try JSONDecoder().decode(BackupManifest.self,from:boundedBytes(absentArchive.appendingPathComponent("manifest.json")))
+        try check(absentManifest.absent.contains { $0.originalPath == absentDailyPath.path },
+                  "missing Daily is explicitly archived as absence before creation")
+        try check(try fullStore.verifyBackup(absentDailyBackup) == absentDailyRevision,
+                  "missing Daily existing verified backup retains exact source revision")
+        let readOnlyMissingDaily = try fullStore.prepareAppTotals(ApplyRequest(start:0,end:86400,sessions:[],revision:absentDailyRevision))
+        try check(readOnlyMissingDaily.first!.original == nil && !FileManager.default.fileExists(atPath:absentDailyPath.path),
+                  "missing Daily plan creates no source or backup")
+        try fullStore.writeAppTotal(readOnlyMissingDaily.first!)
+        try check(try fullStore.fingerprint() != absentDailyRevision,
+                  "newly appeared Daily invalidates bound absence revision")
+        try check(try fullStore.verifyBackup(absentDailyBackup) == absentDailyRevision,
+                  "absence backup remains verified after Daily fixture creation")
+        try FileManager.default.removeItem(at:absentDailyPath)
+        try check(try fullStore.fingerprint() == absentDailyRevision,
+                  "restoring recorded Daily absence restores exact precreation revision")
+        // Restore all cache fixtures for independent legacy tests below.
+        try FileManager.default.removeItem(at:cache)
+        try AppTotalFixtures.create(cache)
+        // Both absent granularities, including metadata, are explicitly bound
+        // to the verified CURRENT backup before any exclusive cache creation.
+        let bothDaily = cache.appendingPathComponent("Daily/ActivitySegments/0.0.plist")
+        let bothWeekly = cache.appendingPathComponent("Weekly/ActivitySegments/0.0.plist")
+        let dailyMetadata = cache.appendingPathComponent("Daily/Metadata.plist")
+        let weeklyMetadata = cache.appendingPathComponent("Weekly/Metadata.plist")
+        for path in [bothDaily,bothWeekly,dailyMetadata,weeklyMetadata] { try FileManager.default.removeItem(at:path) }
+        let hmetaPath = cache.appendingPathComponent("Hourly/Metadata.plist")
+        let savedHmeta = try boundedBytes(hmetaPath)
+        var hmetaDoc = try PropertyListSerialization.propertyList(from:savedHmeta,format:nil) as! [String:Any]
+        var hmetaValue = hmetaDoc["value"] as! [String:Any]
+        hmetaValue.removeValue(forKey:"untouched"); hmetaDoc["value"] = hmetaValue
+        try fullStore.writeExisting(hmetaPath,original:savedHmeta,replacement:AppTotalFixtures.bytes(hmetaDoc))
+        let bothRevision = try fullStore.fingerprint()
+        let bothBackup = try fullStore.backup()
+        let bothArchive = parity.appendingPathComponent("Backups").appendingPathComponent(bothBackup)
+        let bothManifest = try JSONDecoder().decode(BackupManifest.self,from:boundedBytes(bothArchive.appendingPathComponent("manifest.json")))
+        try check([bothDaily,bothWeekly,dailyMetadata,weeklyMetadata].allSatisfy { path in
+            bothManifest.absent.contains { $0.originalPath == path.path }
+        }, "both missing records and both missing metadata explicitly archived as absence")
+        try check(try fullStore.verifyBackup(bothBackup) == bothRevision, "both-missing backup independently verified")
+        let bothPlans = try fullStore.prepareAppTotals(ApplyRequest(start:0,end:86400,sessions:[],revision:bothRevision))
+        let missingPlans = bothPlans.filter { $0.original == nil }
+        for plan in missingPlans { try fullStore.writeAppTotal(plan) }
+        try check(try fullStore.fingerprint() != bothRevision, "all exclusive creations change bound revision")
+        for plan in missingPlans { try FileManager.default.removeItem(at:plan.path) }
+        try check(try fullStore.fingerprint() == bothRevision, "restoring all recorded absences restores exact source revision")
+        try check(try fullStore.verifyBackup(bothBackup) == bothRevision, "both-missing archive stays verified through creation and restore")
+        try FileManager.default.removeItem(at:cache)
+        try AppTotalFixtures.create(cache)
         let preBacklightRace = try boundedBytes(backlightPath)
         let preUsageRace = try boundedBytes(usagePath)
         let raceRevision = try fullStore.fingerprint()
