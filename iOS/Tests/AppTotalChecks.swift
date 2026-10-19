@@ -143,6 +143,138 @@ import Darwin
             let p = try st.prepareAppTotals(edit,now:now)
             try check(p.filter{$0.path.path.contains("Hourly/ActivitySegments")}.count == Int(length/3600),"23/25 DST hours")
         }
+
+        let cloudNow = Date(timeIntervalSinceReferenceDate:1000)
+        let cloudGroup = base.appendingPathComponent("cloud-groups")
+        let cloudLocal = cloudGroup.appendingPathComponent("fixture/Library/com.apple.DeviceActivity/Local")
+        try AppTotalFixtures.create(cloudLocal)
+        let cloud = try AppTotalFixtures.cloud(cloudLocal)
+        let cloudStore = NativeStorage(database:base.appendingPathComponent("unused"),stream:base.appendingPathComponent("unused"),
+            backups:base.appendingPathComponent("cloud-backups"),groupRoot:cloudGroup)
+        let cloudDay = cloud.appendingPathComponent("Daily/ActivitySegments/0.0.plist")
+        let cloudWeek = cloud.appendingPathComponent("Weekly/ActivitySegments/0.0.plist")
+        let cloudDayBytes = try boundedBytes(cloudDay), cloudWeekBytes = try boundedBytes(cloudWeek)
+        let localDay = cloudLocal.appendingPathComponent("Daily/ActivitySegments/0.0.plist")
+        let localWeek = cloudLocal.appendingPathComponent("Weekly/ActivitySegments/0.0.plist")
+        for path in [localDay,localWeek,cloudLocal.appendingPathComponent("Daily/Metadata.plist"),cloudLocal.appendingPathComponent("Weekly/Metadata.plist")] {
+            try FileManager.default.removeItem(at:path)
+        }
+        let cloudPlans = try cloudStore.prepareAppTotals(request,now:cloudNow)
+        let dayPlan = cloudPlans.first { $0.path == localDay }!, weeklyPlan = cloudPlans.first { $0.path == localWeek }!
+        try check(dayPlan.original == nil && weeklyPlan.original == nil,"missing Local records explicitly planned as creation")
+        try check(try total(dayPlan.replacement) == 14400 && total(weeklyPlan.replacement) == 14400,"same-device Cloud day/week exact sum and outside contribution")
+        func normalizedCloud(_ data: Data) throws -> Data {
+            var doc = NativeAppTotals.withoutRecordIdentity(try PropertyListSerialization.propertyList(from:data,format:nil)) as! [String:Any]
+            var value = doc["value"] as! [String:Any]; value["recordZoneName"] = "fixture"; doc["value"] = value
+            return try AppTotalFixtures.bytes(doc)
+        }
+        try assertCategories(normalizedCloud(cloudDayBytes),dayPlan.replacement)
+        try assertCategories(normalizedCloud(cloudWeekBytes),weeklyPlan.replacement)
+        let cloudOldApps = try NativeAppTotals.apps(NativeAppTotals.SegmentValue(cloudWeekBytes).value)
+        let cloudOldDay = try NativeAppTotals.apps(NativeAppTotals.SegmentValue(cloudDayBytes).value)
+        let cloudNewApps = try NativeAppTotals.apps(NativeAppTotals.SegmentValue(weeklyPlan.replacement).value)
+        for bundle in [AppTotalFixtures.a,AppTotalFixtures.b] {
+            try check(cloudNewApps[bundle]!.duration-7200 == cloudOldApps[bundle]!.duration-cloudOldDay[bundle]!.duration,"Cloud per-app outside-week contribution exact")
+        }
+        try check(try boundedBytes(cloudDay) == cloudDayBytes && boundedBytes(cloudWeek) == cloudWeekBytes &&
+            !FileManager.default.fileExists(atPath:localDay.path),"Cloud fallback planning read-only; never edits Cloud")
+        try check(!FileManager.default.fileExists(atPath:cloudStore.backups.path),"planning does not create backup")
+        let metaPath = cloud.appendingPathComponent("Daily/Metadata.plist")
+        let savedMeta = try boundedBytes(metaPath)
+        func changedMeta(_ edit: (inout [String:Any]) -> Void) throws -> Data {
+            var doc = try PropertyListSerialization.propertyList(from:savedMeta,format:nil) as! [String:Any]
+            var value = doc["value"] as! [String:Any]; edit(&value); doc["value"] = value
+            return try AppTotalFixtures.bytes(doc)
+        }
+        for (label,data) in [
+            ("stale",try changedMeta { $0["lastUpdatedDate"] = Date(timeIntervalSinceReferenceDate:-120) }),
+            ("future",try changedMeta { $0["lastUpdatedDate"] = now.addingTimeInterval(86400) }),
+            ("wrong device",try changedMeta { $0["device"] = ["identifier":"other"] }),
+            ("wrong user",try changedMeta { $0["user"] = ["role":1] }),
+            ("wrong record",try changedMeta { $0["recordName"] = "other_Daily" }),
+            ("wrong interval",try changedMeta { $0["segmentInterval"] = 0 }),
+            ("unknown schema",try changedMeta { $0["unknownProvenance"] = 1 }),
+            ("missing identity",try changedMeta { $0.removeValue(forKey:"recordSystemFields") }),
+            ("malformed identity",try changedMeta { $0["recordSystemFields"] = Data([1,2,3]) })
+        ] {
+            try cloudStore.writeExisting(metaPath,original:boundedBytes(metaPath),replacement:data)
+            try rejects("Cloud "+label+" fails closed") { _ = try cloudStore.prepareAppTotals(request,now:cloudNow) }
+        }
+        try cloudStore.writeExisting(metaPath,original:boundedBytes(metaPath),replacement:savedMeta)
+        let noCoverage = ApplyRequest(start:-86400,end:0,sessions:[],revision:rev)
+        try rejects("uncovered earlier day fails independently") { _ = try cloudStore.prepareAppTotals(noCoverage,now:cloudNow) }
+        try check(try cloudStore.prepareAppTotals(request,now:cloudNow).count == 29,"earlier unknown does not block covered day")
+        // A copied record from another granularity/zone cannot impersonate this device/day.
+        try cloudStore.writeExisting(cloudDay,original:cloudDayBytes,replacement:cloudWeekBytes)
+        try rejects("mismatched day/week Cloud record rejected") { _ = try cloudStore.prepareAppTotals(request,now:cloudNow) }
+        try cloudStore.writeExisting(cloudDay,original:cloudWeekBytes,replacement:cloudDayBytes)
+        let second = cloud.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("second-account/"+cloud.lastPathComponent)
+        try FileManager.default.createDirectory(at:second,withIntermediateDirectories:true)
+        try rejects("ambiguous cross-account device directory rejected") { _ = try cloudStore.prepareAppTotals(request,now:cloudNow) }
+        try FileManager.default.removeItem(at:second.deletingLastPathComponent())
+        // Existing native week wins over Cloud; no replaced or zeroed outside history.
+        let savedLocalWeek = try AppTotalFixtures.bytes(AppTotalFixtures.document(start:0,duration:604800,a:900,b:800))
+        try privateWrite(savedLocalWeek,localWeek)
+        try privateWrite(try boundedBytes(cloudLocal.appendingPathComponent("Hourly/Metadata.plist")),cloudLocal.appendingPathComponent("Weekly/Metadata.plist"))
+        let preserved = try cloudStore.prepareAppTotals(request,now:cloudNow)
+        try check(try total(preserved.first { $0.path == localWeek }!.replacement) == 15900,"known Local weekly outside history takes precedence")
+        try check(try boundedBytes(localWeek) == savedLocalWeek,"known Local weekly read-only while planning")
+        try FileManager.default.removeItem(at:localWeek)
+        try FileManager.default.removeItem(at:cloudLocal.appendingPathComponent("Weekly/Metadata.plist"))
+        for plan in cloudPlans { try cloudStore.writeAppTotal(plan) } // fixture only
+        try check(try cloudStore.prepareAppTotals(request,now:cloudNow).count == 29,"promoted native Cloud records reusable without legacy rejection")
+        try check(try boundedBytes(cloudDay) == cloudDayBytes && boundedBytes(cloudWeek) == cloudWeekBytes,"fixture writes leave Cloud sources unchanged")
+
+        let outsideGroup = base.appendingPathComponent("cloud-outside")
+        let outsideLocal = outsideGroup.appendingPathComponent("fixture/Library/com.apple.DeviceActivity/Local")
+        try AppTotalFixtures.create(outsideLocal)
+        let outsideCloud = try AppTotalFixtures.cloud(outsideLocal,today:86400)
+        for relative in ["Weekly/ActivitySegments/0.0.plist","Daily/Metadata.plist","Weekly/Metadata.plist"] {
+            try FileManager.default.removeItem(at:outsideLocal.appendingPathComponent(relative))
+        }
+        let outsideStore = NativeStorage(database:base.appendingPathComponent("unused"),stream:base.appendingPathComponent("unused"),
+            backups:base.appendingPathComponent("unused"),groupRoot:outsideGroup)
+        let outsideRequest = ApplyRequest(start:86400,end:172800,sessions:[
+            StoredSession(bundle:AppTotalFixtures.a,start:90000,end:131400),
+            StoredSession(bundle:AppTotalFixtures.b,start:90000,end:131400)],revision:rev)
+        let outsideNow = Date(timeIntervalSinceReferenceDate:90000)
+        let covered = try outsideStore.prepareAppTotals(outsideRequest,now:outsideNow)
+        try check(try total(covered.first { $0.path.path.contains("/Daily/ActivitySegments/") }!.replacement) == 82800,"covered next-day production plan exact 23h")
+        try check(try total(covered.first { $0.path.path.contains("/Weekly/ActivitySegments/") }!.replacement) == 83000,"Cloud prior-day native 200 seconds preserved exactly")
+        let priorDay = outsideCloud.appendingPathComponent("Daily/ActivitySegments/0.0.plist")
+        let priorBytes = try boundedBytes(priorDay)
+        try FileManager.default.removeItem(at:priorDay)
+        try rejects("missing outside prior day never assumed zero") { _ = try outsideStore.prepareAppTotals(outsideRequest,now:outsideNow) }
+        try privateWrite(priorBytes,priorDay)
+        let outsideWeek = outsideCloud.appendingPathComponent("Weekly/ActivitySegments/0.0.plist")
+        let outsideWeekBytes = try boundedBytes(outsideWeek)
+        var weekDoc = try PropertyListSerialization.propertyList(from:outsideWeekBytes,format:nil) as! [String:Any]
+        var weekValue = weekDoc["value"] as! [String:Any]
+        var weekCategories = weekValue["categoryActivities"] as! [[String:Any]]
+        var weekApps = weekCategories[0]["applicationActivities"] as! [[String:Any]]
+        weekApps[0]["totalActivityDuration"] = 201.0
+        weekCategories[0]["applicationActivities"] = weekApps
+        weekValue["categoryActivities"] = weekCategories; weekDoc["value"] = weekValue
+        try outsideStore.writeExisting(outsideWeek,original:outsideWeekBytes,replacement:AppTotalFixtures.bytes(weekDoc))
+        try rejects("unknown future or uncovered weekly contribution rejected") { _ = try outsideStore.prepareAppTotals(outsideRequest,now:outsideNow) }
+        try outsideStore.writeExisting(outsideWeek,original:boundedBytes(outsideWeek),replacement:outsideWeekBytes)
+        let outsideMeta = outsideCloud.appendingPathComponent("Daily/Metadata.plist")
+        let outsideMetaBytes = try boundedBytes(outsideMeta)
+        var oldDoc = try PropertyListSerialization.propertyList(from:outsideMetaBytes,format:nil) as! [String:Any]
+        var oldValue = oldDoc["value"] as! [String:Any]
+        oldValue["lastUpdatedDate"] = Date(timeIntervalSinceReferenceDate:0);oldDoc["value"] = oldValue
+        try outsideStore.writeExisting(outsideMeta,original:outsideMetaBytes,replacement:AppTotalFixtures.bytes(oldDoc))
+        try rejects("stale Cloud snapshot before selected today rejected") { _ = try outsideStore.prepareAppTotals(outsideRequest,now:outsideNow) }
+        try outsideStore.writeExisting(outsideMeta,original:boundedBytes(outsideMeta),replacement:outsideMetaBytes)
+        // Local Hourly has its own refresh cycle; it is not a history bound.
+        let laterHourMeta = outsideLocal.appendingPathComponent("Hourly/Metadata.plist")
+        let hourBefore = try boundedBytes(laterHourMeta)
+        var hourDoc = try PropertyListSerialization.propertyList(from:hourBefore,format:nil) as! [String:Any]
+        var hourValue = hourDoc["value"] as! [String:Any]
+        hourValue["lastUpdatedDate"] = Date(timeIntervalSinceReferenceDate:89999);hourDoc["value"] = hourValue
+        try outsideStore.writeExisting(laterHourMeta,original:hourBefore,replacement:AppTotalFixtures.bytes(hourDoc))
+        try check(try outsideStore.prepareAppTotals(outsideRequest,now:outsideNow).count == 29,
+            "coherent fully covered Cloud snapshot survives independently newer Local Hourly")
         print("PASS native preserve-category production planner \(count) checks; disposable fixtures only, no planning bypass")
     }
 }

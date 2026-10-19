@@ -449,6 +449,59 @@ import Darwin
         try check(try fullStore.verifyBackup(bothBackup) == bothRevision,"absence archive remains verified")
         try FileManager.default.removeItem(at:cache)
         try AppTotalFixtures.create(cache)
+
+        let cloudSource = try AppTotalFixtures.cloud(cache)
+        let cloudMissing = [cache.appendingPathComponent("Daily/ActivitySegments/0.0.plist"),
+            cache.appendingPathComponent("Weekly/ActivitySegments/0.0.plist"),
+            cache.appendingPathComponent("Daily/Metadata.plist"),cache.appendingPathComponent("Weekly/Metadata.plist")]
+        for path in cloudMissing { try FileManager.default.removeItem(at:path) }
+        let cloudRevision = try fullStore.fingerprint()
+        let cloudRequest = ApplyRequest(start:0,end:86400,sessions:[
+            StoredSession(bundle:AppTotalFixtures.a,start:3600,end:45000),
+            StoredSession(bundle:AppTotalFixtures.b,start:3600,end:45000)],revision:cloudRevision)
+        let cloudPlan = try fullStore.prepareAppTotals(cloudRequest,now:Date(timeIntervalSinceReferenceDate:1000))
+        try check(try fullStore.fingerprint() == cloudRevision,"production Cloud planning binds source and stays read-only")
+        let cloudBackup = try fullStore.backup()
+        let cloudArchive = fullStore.backups.appendingPathComponent(cloudBackup)
+        let cloudManifest = try JSONDecoder().decode(BackupManifest.self,from:boundedBytes(cloudArchive.appendingPathComponent("manifest.json")))
+        try check(try fullStore.verifyBackup(cloudBackup) == cloudRevision,"Cloud source and Local absence backup SHA independently verified")
+        try check(cloudMissing.allSatisfy { path in cloudManifest.absent.contains { $0.originalPath == path.path } },
+            "Cloud promotion archives both Local records and metadata absences")
+        try check(cloudManifest.files.contains { $0.originalPath == cloudSource.appendingPathComponent("Daily/ActivitySegments/0.0.plist").path } &&
+            cloudManifest.files.contains { $0.originalPath.hasSuffix("/LocalDeviceIdentifier.plist") },
+            "verified backup binds source Cloud native data and Local device identity")
+        let cloudMeta = cloudSource.appendingPathComponent("Daily/Metadata.plist")
+        let cloudMetaBefore = try boundedBytes(cloudMeta)
+        var cloudDoc = try PropertyListSerialization.propertyList(from:cloudMetaBefore,format:nil) as! [String:Any]
+        var cloudValue = cloudDoc["value"] as! [String:Any]; cloudValue["lastUpdatedDate"] = Date(timeIntervalSinceReferenceDate:50)
+        cloudDoc["value"] = cloudValue
+        try fullStore.writeExisting(cloudMeta,original:cloudMetaBefore,replacement:AppTotalFixtures.bytes(cloudDoc))
+        try check(try fullStore.fingerprint() != cloudRevision,"Cloud source mutation changes production transaction revision")
+        try fullStore.writeExisting(cloudMeta,original:boundedBytes(cloudMeta),replacement:cloudMetaBefore)
+        for plan in cloudPlan { try fullStore.writeAppTotal(plan) } // disposable fixture only
+        try check(try NativeAppTotals.seconds(NativeAppTotals.SegmentValue(boundedBytes(cloudMissing[0])).value["totalActivityDuration"]) == 82800,
+            "production fixture writes overlapping 11.5h plus 11.5h as 23h")
+        try check(try fullStore.verifyBackup(cloudBackup) == cloudRevision,"verified archive immutable after fixture-only promotion")
+        // Restore exact archived presence/absence only inside this disposable
+        // fixture. No production restore API or real-device writes are invoked.
+        let oldPaths = Set(cloudManifest.files.map(\.originalPath))
+        for plan in cloudPlan where !oldPaths.contains(plan.path.path) {
+            if FileManager.default.fileExists(atPath:plan.path.path) { try FileManager.default.removeItem(at:plan.path) }
+        }
+        for file in cloudManifest.files where file.originalPath.hasPrefix(cache.path+"/") {
+            let target = URL(fileURLWithPath:file.originalPath)
+            let saved = try boundedBytes(cloudArchive.appendingPathComponent(file.name))
+            if FileManager.default.fileExists(atPath:target.path) {
+                try fullStore.writeExisting(target,original:boundedBytes(target),replacement:saved)
+            } else { try privateWrite(saved,target) }
+        }
+        try check(cloudMissing.allSatisfy { !FileManager.default.fileExists(atPath:$0.path) },
+            "fixture restoration reinstates original Local absences rather than zero baselines")
+        try check(try fullStore.fingerprint() == cloudRevision,"fixture restoration returns exact full source revision including Cloud")
+        try FileManager.default.removeItem(at:cache)
+        try FileManager.default.removeItem(at:cloudSource.deletingLastPathComponent().deletingLastPathComponent())
+        try FileManager.default.removeItem(at:cache.deletingLastPathComponent().appendingPathComponent("LocalDeviceIdentifier.plist"))
+        try AppTotalFixtures.create(cache)
         // Match the live blocker: retained native events begin AFTER the
         // selected edit. Planning must synthesize a closed missing boundary,
         // while production Apply still verifies a current backup before writes.

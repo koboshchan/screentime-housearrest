@@ -1,4 +1,5 @@
 import Foundation
+import CloudKit
 
 enum AppTotalFixtures {
     static let a = "com.apple.mobilesafari"
@@ -47,4 +48,67 @@ enum AppTotalFixtures {
                                              "segmentInterval":gran == "Hourly" ? 0 : (gran == "Daily" ? 1 : 2)]]), root.appendingPathComponent(gran + "/Metadata.plist"))
         }
     }
+    /// Synthetic secure CKRecord fields, never real account or device data.
+    static func cloud(_ root: URL, today: Double = 0) throws -> URL {
+        let identifier = "00000000-0000-4000-8000-000000000000"
+        let parent = root.deletingLastPathComponent()
+        try privateWrite(bytes(["value":identifier]),parent.appendingPathComponent("LocalDeviceIdentifier.plist"))
+        let cloud = parent.appendingPathComponent("Cloud/fixture-account/"+identifier)
+        let hourlyPath = root.appendingPathComponent("Hourly/Metadata.plist")
+        var hourlyDoc = try PropertyListSerialization.propertyList(from:boundedBytes(hourlyPath),format:nil) as! [String:Any]
+        var hourlyValue = hourlyDoc["value"] as! [String:Any]
+        hourlyValue.removeValue(forKey:"untouched")
+        hourlyValue["device"] = ["identifier":identifier]
+        hourlyValue["lastUpdatedDate"] = Date(timeIntervalSinceReferenceDate:today)
+        hourlyDoc["value"] = hourlyValue
+        try FileManager.default.removeItem(at:hourlyPath)
+        try privateWrite(bytes(hourlyDoc),hourlyPath)
+        for gran in ["Daily","Weekly"] {
+            let target = cloud.appendingPathComponent(gran+"/ActivitySegments")
+            try FileManager.default.createDirectory(at:target,withIntermediateDirectories:true)
+            let zone = identifier+"_"+gran
+            func identity(_ name: String,_ type: String) -> Data {
+                let record = CKRecord(recordType:type,recordID:CKRecord.ID(recordName:name,zoneID:CKRecordZone.ID(zoneName:zone,ownerName:CKCurrentUserDefaultName)))
+                let coder = NSKeyedArchiver(requiringSecureCoding:true)
+                record.encodeSystemFields(with:coder); coder.finishEncoding()
+                return coder.encodedData
+            }
+            let source = root.appendingPathComponent(gran+"/ActivitySegments")
+            for path in try FileManager.default.contentsOfDirectory(at:source,includingPropertiesForKeys:nil) where path.pathExtension == "plist" {
+                var doc = try PropertyListSerialization.propertyList(from:boundedBytes(path),format:nil) as! [String:Any]
+                var value = doc["value"] as! [String:Any]
+                if gran == "Weekly" {
+                    var categories = value["categoryActivities"] as! [[String:Any]]
+                    for i in categories.indices {
+                        var apps = categories[i]["applicationActivities"] as! [[String:Any]]
+                        for j in apps.indices { apps[j]["totalActivityDuration"] = 100.0 * (today/86400+1) }
+                        categories[i]["applicationActivities"] = apps
+                    }
+                    value["categoryActivities"] = categories
+                }
+                value["recordZoneName"] = zone
+                value["recordSystemFields"] = identity(path.deletingPathExtension().lastPathComponent,"ActivitySegment")
+                doc["value"] = value
+                try privateWrite(bytes(doc),target.appendingPathComponent(path.lastPathComponent))
+            }
+            if gran == "Daily" && today > 0 {
+                var doc = document(start:today,duration:86400)
+                var value = doc["value"] as! [String:Any]
+                value["recordZoneName"] = zone
+                value["recordSystemFields"] = identity(String(format:"%.1f",today),"ActivitySegment")
+                doc["value"] = value
+                try privateWrite(bytes(doc),target.appendingPathComponent(String(format:"%.1f.plist",today)))
+            }
+            var doc = try PropertyListSerialization.propertyList(from:boundedBytes(root.appendingPathComponent(gran+"/Metadata.plist")),format:nil) as! [String:Any]
+            var value = doc["value"] as! [String:Any]
+            value.removeValue(forKey:"untouched")
+            value["device"] = hourlyValue["device"]
+            value["lastUpdatedDate"] = Date(timeIntervalSinceReferenceDate:today)
+            value["recordSystemFields"] = identity(zone,"Metadata")
+            doc["value"] = value
+            try privateWrite(bytes(doc),cloud.appendingPathComponent(gran+"/Metadata.plist"))
+        }
+        return cloud
+    }
+
 }

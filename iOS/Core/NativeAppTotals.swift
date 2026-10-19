@@ -1,5 +1,6 @@
 import Foundation
 import CoreFoundation
+import CloudKit
 import Darwin
 
 /// Native adaptation of the Gemini DeviceActivity cache bypass. Never imports
@@ -89,7 +90,7 @@ enum NativeAppTotals {
             let amount = try seconds(totals[bundle])
             guard amount > 0 else { continue }
             guard let template = catalog[bundle], let id = template.category["identifier"] as? String else {
-                throw StorageFailure("unsupported_schema", "No native cache app template for \(bundle). Open Screen Time after using this app, then reload.")
+                throw StorageFailure("unsupported_schema", "No trusted native app/category template for \(bundle); nothing applied.")
             }
             var entry = template.value
             entry["totalActivityDuration"] = amount
@@ -165,6 +166,21 @@ enum NativeAppTotals {
         value["segmentInterval"] = granularity == "Daily" ? 1 : 2
         return try metadata(PropertyListSerialization.data(fromPropertyList:["value":value],format:.binary,options:0),until:until)
     }
+    /// Decode only Apple's secure system-field archive, never arbitrary classes.
+    /// Both zone and record names must bind a segment to this device/granularity.
+    static func cloudIdentity(_ value: [String: Any], name: String, zone: String, type: String) throws {
+        guard let data = value["recordSystemFields"] as? Data, !data.isEmpty, data.count <= 1024*1024 else {
+            throw StorageFailure("untrusted_baseline", "Cloud record identity is missing; nothing applied.")
+        }
+        let coder = try NSKeyedUnarchiver(forReadingFrom:data)
+        coder.requiresSecureCoding = true
+        coder.decodingFailurePolicy = .setErrorAndReturn
+        let record = CKRecord(coder:coder)
+        coder.finishDecoding()
+        try requireStorage(coder.error == nil && record?.recordType == type &&
+            record?.recordID.recordName == name && record?.recordID.zoneID.zoneName == zone,
+            "Cloud record device, interval or zone identity mismatch; nothing applied.", "untrusted_baseline")
+    }
     static func metadata(_ data: Data, until: Date) throws -> Data {
         guard var doc = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
               var value = doc["value"] as? [String: Any],
@@ -207,6 +223,156 @@ extension NativeStorage {
         calendar.minimumDaysInFirstWeek = 1
         return calendar
     }
+    /// Resolve only this device's Cloud directory under exactly one account.
+    /// Never scan another device for substitute usage or infer empty history.
+    func sameDeviceCloudRoot(_ root: URL) throws -> URL? {
+        let parent = root.deletingLastPathComponent()
+        let identifierPath = parent.appendingPathComponent("LocalDeviceIdentifier.plist")
+        try rejectLinks(identifierPath)
+        var info = stat()
+        if lstat(identifierPath.path,&info) != 0 {
+            try requireStorage(errno == ENOENT,"Cannot inspect local device identity.","read_failed")
+            return nil
+        }
+        let doc = try PropertyListSerialization.propertyList(from:boundedBytes(identifierPath),format:nil) as? [String:Any]
+        guard let identifier = doc?["value"] as? String, UUID(uuidString:identifier) != nil else {
+            throw StorageFailure("untrusted_baseline","Invalid local device identity; nothing applied.")
+        }
+        let cloud = parent.appendingPathComponent("Cloud")
+        try rejectLinks(cloud)
+        if lstat(cloud.path,&info) != 0 {
+            try requireStorage(errno == ENOENT,"Cannot inspect Cloud root.","read_failed")
+            return nil
+        }
+        try requireStorage(info.st_mode & S_IFMT == S_IFDIR,"Unsafe Cloud root.","unsafe_path")
+        let accounts = try FileManager.default.contentsOfDirectory(at:cloud,includingPropertiesForKeys:nil)
+        try requireStorage(accounts.count <= 1000,"Too many Cloud accounts.","size_limit")
+        var matches: [URL] = []
+        for account in accounts {
+            try rejectLinks(account)
+            try requireStorage(lstat(account.path,&info) == 0,"Cannot inspect Cloud account entry.","read_failed")
+            if info.st_mode & S_IFMT == S_IFREG && info.st_nlink == 1 { continue }
+            try requireStorage(info.st_mode & S_IFMT == S_IFDIR,"Unsafe Cloud account directory.","unsafe_path")
+            let device = account.appendingPathComponent(identifier)
+            try rejectLinks(device)
+            if lstat(device.path,&info) == 0 {
+                try requireStorage(info.st_mode & S_IFMT == S_IFDIR,"Unsafe Cloud device directory.","unsafe_path")
+                matches.append(device)
+            } else { try requireStorage(errno == ENOENT,"Cannot inspect Cloud device.","read_failed") }
+        }
+        try requireStorage(matches.count <= 1,"Ambiguous same-device Cloud accounts.","untrusted_baseline")
+        return matches.first
+    }
+
+    func cloudBaseline(_ root: URL, granularity: String, start: Double, end: Double,
+                       now: Date) throws -> NativeAppTotals.SegmentValue {
+        guard let cloud = try sameDeviceCloudRoot(root) else {
+            throw StorageFailure("incomplete_baseline","No matching same-device native Cloud baseline; nothing applied.")
+        }
+        let identifier = cloud.lastPathComponent
+        func metadataValue(_ path: URL) throws -> [String:Any] {
+            guard let doc = try PropertyListSerialization.propertyList(from:boundedBytes(path),format:nil) as? [String:Any],
+                  let value = doc["value"] as? [String:Any] else {
+                throw StorageFailure("untrusted_baseline","Invalid Cloud provenance metadata; nothing applied.")
+            }
+            return value
+        }
+        let hourly = try metadataValue(root.appendingPathComponent("Hourly/Metadata.plist"))
+        let meta = try metadataValue(cloud.appendingPathComponent(granularity+"/Metadata.plist"))
+        let expected = identifier+"_"+granularity
+        let metadataKeys: Set<String> = ["device","user","lastUpdatedDate","recordName","recordSystemFields","segmentInterval"]
+        guard Set(meta.keys).isSubset(of:metadataKeys),
+              let device = hourly["device"] as? [String:Any], device["identifier"] as? String == identifier,
+              let hourlyInterval = hourly["segmentInterval"] as? NSNumber, CFGetTypeID(hourlyInterval) != CFBooleanGetTypeID(),
+              hourlyInterval.doubleValue == 0,
+              let user = hourly["user"] as? [String:Any], !user.isEmpty,
+              let cloudDevice = meta["device"] as? [String:Any], let cloudUser = meta["user"] as? [String:Any],
+              NSDictionary(dictionary:device).isEqual(to:cloudDevice),
+              NSDictionary(dictionary:user).isEqual(to:cloudUser),
+              hourly["recordName"] as? String == identifier+"_Hourly",
+              meta["recordName"] as? String == expected,
+              let interval = meta["segmentInterval"] as? NSNumber, CFGetTypeID(interval) != CFBooleanGetTypeID(),
+              interval.doubleValue == (granularity == "Daily" ? 1 : 2),
+              let localDate = hourly["lastUpdatedDate"] as? Date,
+              let cloudDate = meta["lastUpdatedDate"] as? Date,
+              localDate.timeIntervalSinceReferenceDate.isFinite, cloudDate.timeIntervalSinceReferenceDate.isFinite,
+              cloudDate <= now, localDate <= now,
+              cloudDate >= (try cacheCalendar(root)).startOfDay(for:now),
+              cloudDate.timeIntervalSinceReferenceDate >= start else {
+            throw StorageFailure("untrusted_baseline","Cloud baseline predates today or does not match local device/user provenance; nothing applied.")
+        }
+        try NativeAppTotals.cloudIdentity(meta,name:expected,zone:expected,type:"Metadata")
+        let path = cloud.appendingPathComponent(granularity+"/ActivitySegments/"+String(format:"%.1f.plist",start))
+        let segment = try NativeAppTotals.SegmentValue(boundedBytes(path))
+        let segmentKeys: Set<String> = ["recordZoneName","recordSystemFields","dateInterval","categoryActivities",
+            "firstPickup","longestActivity","totalActivityDuration","totalPickupsWithoutApplicationActivity"]
+        try requireStorage(Set(segment.document.keys) == ["value"] && Set(segment.value.keys).isSubset(of:segmentKeys) &&
+            abs(segment.start-start) < 0.001 && abs(segment.end-end) < 0.001 &&
+            segment.value["recordZoneName"] as? String == expected,
+            "Cloud baseline does not cover the requested native interval; nothing applied.","untrusted_baseline")
+        try NativeAppTotals.cloudIdentity(segment.value,name:String(format:"%.1f",start),zone:expected,type:"ActivitySegment")
+        var document = NativeAppTotals.withoutRecordIdentity(segment.document) as! [String:Any]
+        var value = document["value"] as! [String:Any]
+        // CloudKit zone identities are not valid in Local. Keep Local's envelope.
+        let hourPaths = try FileManager.default.contentsOfDirectory(at:root.appendingPathComponent("Hourly/ActivitySegments"),includingPropertiesForKeys:nil)
+            .filter { $0.pathExtension == "plist" }.sorted { $0.path < $1.path }
+        guard let first = hourPaths.first else { throw StorageFailure("incomplete_baseline","Missing Local envelope.") }
+        let local = try NativeAppTotals.SegmentValue(boundedBytes(first))
+        value["recordZoneName"] = local.value["recordZoneName"]
+        document["value"] = value
+        return try NativeAppTotals.SegmentValue(PropertyListSerialization.data(fromPropertyList:document,format:.binary,options:0))
+    }
+
+    /// For today's missing baselines, a coherent native Cloud snapshot can be
+    /// older than Local Hourly: selected-day usage is replaced, not inherited.
+    /// Prove every CLOSED outside day from native Daily records and reconcile
+    /// their per-app sum against Weekly. Missing days or unexplained future
+    /// contributions are unknown, never zero. No historical-date fallback.
+    func validatedCloudSnapshot(_ root: URL, request: ApplyRequest, now: Date)
+        throws -> [String:NativeAppTotals.SegmentValue] {
+        let calendar = try cacheCalendar(root)
+        let today = calendar.startOfDay(for:now)
+        guard abs(request.start-today.timeIntervalSinceReferenceDate) < 0.001,
+              let day = calendar.dateInterval(of:.day,for:today),
+              abs(request.end-day.end.timeIntervalSinceReferenceDate) < 0.001,
+              let week = calendar.dateInterval(of:.weekOfYear,for:today),
+              let cloud = try sameDeviceCloudRoot(root) else {
+            throw StorageFailure("incomplete_baseline","Cloud fallback requires today's fully covered native day and week; nothing applied.")
+        }
+        func snapshotDate(_ granularity: String) throws -> Date {
+            let doc = try PropertyListSerialization.propertyList(from:boundedBytes(cloud.appendingPathComponent(granularity+"/Metadata.plist")),format:nil) as? [String:Any]
+            guard let value = doc?["value"] as? [String:Any], let date = value["lastUpdatedDate"] as? Date else {
+                throw StorageFailure("untrusted_baseline","Missing Cloud snapshot timestamp.")
+            }
+            return date
+        }
+        let dailyDate = try snapshotDate("Daily"), weeklyDate = try snapshotDate("Weekly")
+        try requireStorage(dailyDate == weeklyDate,"Cloud Daily and Weekly snapshots are not coherent; nothing applied.","untrusted_baseline")
+        let weekly = try cloudBaseline(root,granularity:"Weekly",start:week.start.timeIntervalSinceReferenceDate,
+                                       end:week.end.timeIntervalSinceReferenceDate,now:now)
+        var sum: [String:Double] = [:], selected: NativeAppTotals.SegmentValue?
+        var cursor = week.start
+        var days = 0
+        while cursor <= today {
+            guard let interval = calendar.dateInterval(of:.day,for:cursor) else {
+                throw StorageFailure("unsupported_schema","Unsupported Cloud day interval.")
+            }
+            let value = try cloudBaseline(root,granularity:"Daily",start:interval.start.timeIntervalSinceReferenceDate,
+                                          end:interval.end.timeIntervalSinceReferenceDate,now:now)
+            for (bundle,app) in try NativeAppTotals.apps(value.value) { sum[bundle,default:0] += app.duration }
+            if cursor == today { selected = value }
+            cursor = interval.end; days += 1
+            try requireStorage(days <= 7,"Unsupported Cloud week coverage.","unsupported_schema")
+        }
+        let weeklyApps = try NativeAppTotals.apps(weekly.value)
+        for bundle in Set(sum.keys).union(weeklyApps.keys) {
+            try requireStorage(abs((sum[bundle] ?? 0)-(weeklyApps[bundle]?.duration ?? 0)) < 0.00001,
+                "Cloud week contains uncovered or inconsistent app history; nothing applied.","incomplete_baseline")
+        }
+        guard let selected else { throw StorageFailure("incomplete_baseline","Selected Cloud day is absent.") }
+        return ["Daily":selected,"Weekly":weekly]
+    }
+
     /// All cache planning and schema checks happen BEFORE the verified backup.
     /// Missing/ambiguous layouts fail closed rather than falling back to a union.
     func prepareAppTotals(_ request: ApplyRequest, now: Date = Date()) throws -> [NativeCacheWrite] {
@@ -251,16 +417,50 @@ extension NativeStorage {
         guard let hours = segments["Hourly"], let template = hours.first else {
             throw StorageFailure("unsupported_schema", "Verified Hourly cache template is required; nothing applied.")
         }
-        let weekly = segments["Weekly"]?.first(where: { $0.2.start <= request.start && $0.2.end >= request.end })
-        let daily = segments["Daily"]?.first(where: { abs($0.2.start-request.start) < 0.01 && abs($0.2.end-request.end) < 0.01 })
-        guard let daily, let weekly else {
-            throw StorageFailure("incomplete_baseline", "Native Daily and Weekly baselines are required. Missing observations are not zero. Open Settings Screen Time Day and Week, then reload. Nothing applied.")
+        let calendar = try cacheCalendar(root)
+        let dayDate = Date(timeIntervalSinceReferenceDate:request.start)
+        guard let weekInterval = calendar.dateInterval(of:.weekOfYear,for:dayDate) else {
+            throw StorageFailure("invalid_input","Edit must cover exactly one native calendar day.")
         }
-        try rejectPreviouslySynthesized([daily, weekly], root: root)
+        var promoted = Set<URL>()
+        var cloudSnapshot: [String:NativeAppTotals.SegmentValue]?
+        func baseline(_ granularity: String, start: Double, end: Double) throws -> (URL,Data,NativeAppTotals.SegmentValue) {
+            if let existing = segments[granularity]?.first(where: { abs($0.2.start-start) < 0.01 && abs($0.2.end-end) < 0.01 }) {
+                return existing
+            }
+            // Never overwrite a conflicting Local interval using Cloud.
+            try requireStorage(!(segments[granularity] ?? []).contains { $0.2.start < end && $0.2.end > start },
+                               "Conflicting Local baseline; nothing applied.","untrusted_baseline")
+            if granularity == "Daily" {
+                let interval = calendar.dateInterval(of:.day,for:dayDate)
+                try requireStorage(interval?.start.timeIntervalSinceReferenceDate == start && interval?.end.timeIntervalSinceReferenceDate == end,
+                                   "Cloud fallback requires a complete native calendar day.","invalid_input")
+            }
+            if cloudSnapshot == nil { cloudSnapshot = try validatedCloudSnapshot(root,request:request,now:now) }
+            guard let value = cloudSnapshot?[granularity],
+                  abs(value.start-start) < 0.001 && abs(value.end-end) < 0.001 else {
+                throw StorageFailure("incomplete_baseline","Missing validated Cloud interval; nothing applied.")
+            }
+            let path = root.appendingPathComponent(granularity+"/ActivitySegments/"+String(format:"%.1f.plist",start))
+            let data = try PropertyListSerialization.data(fromPropertyList:value.document,format:.binary,options:0)
+            for (bundle,app) in try NativeAppTotals.apps(value.value) { catalog[bundle] = app }
+            promoted.insert(path)
+            return (path,data,value)
+        }
+        // Existing native week intervals remain authoritative. Fixtures and
+        // native DST weeks need not equal a fixed seven-day seconds count.
+        let daily = try baseline("Daily",start:request.start,end:request.end)
+        let weekly: (URL,Data,NativeAppTotals.SegmentValue)
+        if let existing = segments["Weekly"]?.first(where: { $0.2.start <= request.start && $0.2.end >= request.end }) {
+            weekly = existing
+        } else {
+            weekly = try baseline("Weekly",start:weekInterval.start.timeIntervalSinceReferenceDate,end:weekInterval.end.timeIntervalSinceReferenceDate)
+        }
+        try rejectPreviouslySynthesized([daily,weekly].filter { !promoted.contains($0.0) },root:root)
         let dayTotals = NativeAppTotals.durations(request, start: request.start, end: request.end)
         let oldDay = try NativeAppTotals.apps(daily.2.value).mapValues { $0.duration }
-        var plans = [NativeCacheWrite(path: daily.0, original: daily.1,
-            replacement: try NativeAppTotals.replacing(daily.2, totals: dayTotals, catalog: catalog), template: daily.0)]
+        var plans = [NativeCacheWrite(path: daily.0, original: promoted.contains(daily.0) ? nil : daily.1,
+            replacement: try NativeAppTotals.replacing(daily.2, totals: dayTotals, catalog: catalog), template: promoted.contains(daily.0) ? template.0 : daily.0)]
         var weekTotals = try NativeAppTotals.apps(weekly.2.value).mapValues { $0.duration }
         for bundle in Set(oldDay.keys).union(dayTotals.keys) {
             let outside = (weekTotals[bundle] ?? 0) - (oldDay[bundle] ?? 0)
@@ -270,8 +470,8 @@ extension NativeStorage {
         }
         try requireStorage(weekTotals.values.allSatisfy { $0.isFinite && $0 >= 0 },
                            "Weekly app total overflow.", "unsupported_schema")
-        plans.append(NativeCacheWrite(path: weekly.0, original: weekly.1,
-            replacement: try NativeAppTotals.replacing(weekly.2, totals: weekTotals, catalog: catalog), template: weekly.0))
+        plans.append(NativeCacheWrite(path: weekly.0, original: promoted.contains(weekly.0) ? nil : weekly.1,
+            replacement: try NativeAppTotals.replacing(weekly.2, totals: weekTotals, catalog: catalog), template: promoted.contains(weekly.0) ? template.0 : weekly.0))
         // DST days are 23/24/25 buckets. No fixed date or hardcoded device ID.
         let count = (request.end - request.start) / 3600
         try requireStorage(count >= 1 && count <= 25 && abs(count.rounded()-count) < 0.0001,
@@ -305,7 +505,13 @@ extension NativeStorage {
                 plans.append(NativeCacheWrite(path:path,original:old,
                     replacement:try NativeAppTotals.metadata(old,until:until),template:path))
             } else {
-                throw StorageFailure("incomplete_baseline", "Native refresh metadata is missing; nothing applied.")
+                try requireStorage(errno == ENOENT && granularity != "Hourly" &&
+                    promoted.contains(where: { $0.path.contains("/"+granularity+"/") }),
+                    "Native refresh metadata is missing; nothing applied.","incomplete_baseline")
+                let hourly = root.appendingPathComponent("Hourly/Metadata.plist")
+                plans.append(NativeCacheWrite(path:path,original:nil,
+                    replacement:try NativeAppTotals.synthesizedMetadata(boundedBytes(hourly),granularity:granularity,until:until),
+                    template:hourly))
             }
         }
         try requireStorage(Set(plans.map { $0.path.path }).count == plans.count, "Duplicate cache write plan.", "unsupported_schema")

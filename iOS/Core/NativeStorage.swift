@@ -487,6 +487,19 @@ public final class NativeStorage {
                         absent.append(("cache-\(i)-" + key,path))
                     }
                 }
+                let identifier = root.deletingLastPathComponent().appendingPathComponent("LocalDeviceIdentifier.plist")
+                try rejectLinks(identifier)
+                var identityInfo = stat()
+                if lstat(identifier.path,&identityInfo) == 0 {
+                    _ = try boundedBytes(identifier)
+                    files.append(("cache-\(i)-LocalDeviceIdentifier.plist",identifier))
+                } else {
+                    try requireStorage(errno == ENOENT,"Cannot inspect Local device identity.","read_failed")
+                    absent.append(("cache-\(i)-LocalDeviceIdentifier.plist",identifier))
+                }
+                if let cloud = try sameDeviceCloudRoot(root) {
+                    try walk(cloud,"cache-cloud-\(i)")
+                }
                 let hourly = root.appendingPathComponent("Hourly/ActivitySegments")
                 if directories.contains(where: { $0.1 == hourly }) {
                     let calendar = try cacheCalendar(root)
@@ -499,9 +512,39 @@ public final class NativeStorage {
                         days.insert(calendar.startOfDay(for:date).timeIntervalSinceReferenceDate)
                         if let week = calendar.dateInterval(of:.weekOfYear,for:date) { weeks.insert(week.start.timeIntervalSinceReferenceDate) }
                     }
+                    if let cloud = try sameDeviceCloudRoot(root) {
+                        let cloudDays = cloud.appendingPathComponent("Daily/ActivitySegments")
+                        try rejectLinks(cloudDays)
+                        var info = stat()
+                        if lstat(cloudDays.path,&info) == 0 {
+                            let paths = try FileManager.default.contentsOfDirectory(at:cloudDays,includingPropertiesForKeys:nil).filter { $0.pathExtension == "plist" }
+                            try requireStorage(paths.count <= 10000,"Too many Cloud daily records.","size_limit")
+                            for path in paths {
+                                let segment = try NativeAppTotals.SegmentValue(boundedBytes(path))
+                                days.insert(segment.start)
+                                if let week = calendar.dateInterval(of:.weekOfYear,for:Date(timeIntervalSinceReferenceDate:segment.start)) {
+                                    weeks.insert(week.start.timeIntervalSinceReferenceDate)
+                                }
+                            }
+                        } else { try requireStorage(errno == ENOENT,"Cannot inspect Cloud days.","read_failed") }
+                    }
                     var relativePaths = ["Daily/Metadata.plist","Weekly/Metadata.plist"]
                     relativePaths += days.sorted().map { "Daily/ActivitySegments/" + String(format:"%.1f.plist",$0) }
                     relativePaths += weeks.sorted().map { "Weekly/ActivitySegments/" + String(format:"%.1f.plist",$0) }
+                    // Bind every potentially created Hourly bucket as an
+                    // explicit absence, including a day known only in Cloud.
+                    for start in days.sorted() {
+                        guard let interval = calendar.dateInterval(of:.day,for:Date(timeIntervalSinceReferenceDate:start)) else {
+                            throw StorageFailure("unsupported_schema","Invalid native day.")
+                        }
+                        var stamp = interval.start.timeIntervalSinceReferenceDate
+                        while stamp < interval.end.timeIntervalSinceReferenceDate {
+                            relativePaths.append("Hourly/ActivitySegments/"+String(format:"%.1f.plist",stamp))
+                            stamp += 3600
+                        }
+                    }
+                    try requireStorage(files.count+directories.count+absent.count+relativePaths.count <= 30000,
+                                       "Cache inventory exceeds limit.","size_limit")
                     for relative in relativePaths {
                         let path = root.appendingPathComponent(relative)
                         try rejectLinks(path); var info = stat()
