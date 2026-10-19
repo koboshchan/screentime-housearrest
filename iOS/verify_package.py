@@ -58,17 +58,20 @@ def signature(path):
     assert "platform IOS" in build and "minos 18.0" in build, build
     print(path.name, "arm64 iOS18 SHA256 CodeDirectory pages and entitlements verified")
 
-def verify(package):
+def verify(package, *, scheme="roothide"):
+    assert scheme in ("roothide", "rootless")
+    prefix = "var/jb/" if scheme == "rootless" else ""
+    arch = "iphoneos-arm64" if scheme == "rootless" else "iphoneos-arm64e"
     fields = command("dpkg-deb", "-f", str(package)).decode()
     assert "Package: com.kobosh.surface\n" in fields
-    assert "Architecture: iphoneos-arm64e" in fields
+    assert "Architecture: " + arch + "\n" in fields
     assert "firmware (>= 18.0)" in fields
     raw = command("dpkg-deb", "--fsys-tarfile", str(package))
     with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
         for entry in archive:
             assert "ScreenTimeEditor.app" not in Path(entry.name).parts, "Old app path must remain untouched"
             assert entry.uid == 0 and entry.gid == 0, "Non-root archive ownership"
-            helper = entry.name.removeprefix("./") == "Applications/Surface.app/stehelper"
+            helper = entry.name.removeprefix("./") == prefix + "Applications/Surface.app/stehelper"
             assert entry.mode & 0o7777 == 0o4755 if helper else not (entry.mode & 0o6000), "Unexpected privileged mode"
             assert not (entry.mode & 0o022), "Writable package entry"
             assert not entry.issym() and not entry.islnk(), "Unexpected package link"
@@ -77,7 +80,7 @@ def verify(package):
         command("dpkg-deb", "-x", str(package), tmp)
         command("dpkg-deb", "-e", str(package), tmp + "/control")
         assert not any((Path(tmp)/"control"/name).exists() for name in ("preinst","postinst","prerm","postrm")), "Unexpected maintainer script"
-        app = Path(tmp)/"Applications/Surface.app"
+        app = Path(tmp)/prefix/"Applications/Surface.app"
         info = plistlib.loads((app/"Info.plist").read_bytes())
         assert info["MinimumOSVersion"] == "18.0"
         assert info["CFBundleIdentifier"] == "com.kobosh.surface"
@@ -90,4 +93,4 @@ def verify(package):
     print("Offline package validation only. Privilege and device runtime not verified.")
 
 if __name__ == "__main__":
-    verify(Path(sys.argv[1]).resolve())
+    verify(Path(sys.argv[1]).resolve(), scheme=sys.argv[2] if len(sys.argv) > 2 else "roothide")

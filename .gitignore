@@ -7,6 +7,7 @@ poc/private/
 **/*.pyc
 **/.DS_Store
 **/.theos/
+**/.theos-rootless/
 **/packages/
 **/obj/
 **/.swiftpm/
