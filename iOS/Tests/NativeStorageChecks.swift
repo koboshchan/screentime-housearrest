@@ -392,17 +392,23 @@ import Darwin
                   "missing Daily is explicitly archived as absence before creation")
         try check(try fullStore.verifyBackup(absentDailyBackup) == absentDailyRevision,
                   "missing Daily existing verified backup retains exact source revision")
-        let readOnlyMissingDaily = try fullStore.prepareAppTotals(ApplyRequest(start:0,end:86400,sessions:[],revision:absentDailyRevision))
-        try check(readOnlyMissingDaily.first!.original == nil && !FileManager.default.fileExists(atPath:absentDailyPath.path),
-                  "missing Daily plan creates no source or backup")
-        try fullStore.writeAppTotal(readOnlyMissingDaily.first!)
-        try check(try fullStore.fingerprint() != absentDailyRevision,
-                  "newly appeared Daily invalidates bound absence revision")
-        try check(try fullStore.verifyBackup(absentDailyBackup) == absentDailyRevision,
-                  "absence backup remains verified after Daily fixture creation")
+        try rejects("production missing Daily rejects before writes") {
+            _ = try fullStore.prepareAppTotals(ApplyRequest(start:0,end:86400,sessions:[],revision:absentDailyRevision))
+        }
+        try check(try fullStore.fingerprint() == absentDailyRevision,"missing Daily leaves exact source revision")
+        let hourTemplate = try NativeAppTotals.SegmentValue(boundedBytes(cache.appendingPathComponent("Hourly/ActivitySegments/0.0.plist")))
+        let emptyLegacy = try NativeAppTotals.synthesized(
+            NativeAppTotals.blank(hourTemplate,start:0,duration:86400),totals:[:],catalog:NativeAppTotals.apps(hourTemplate.value))
+        try privateWrite(emptyLegacy,absentDailyPath)
+        var provenanceCode = ""
+        do { _ = try fullStore.prepareAppTotals(ApplyRequest(start:0,end:86400,sessions:[],revision:absentDailyRevision)) }
+        catch let error as StorageFailure { provenanceCode = error.code }
+        try check(provenanceCode == "untrusted_baseline","verified backup plus exact legacy synthetic output rejected specifically for provenance")
+        try check(try boundedBytes(absentDailyPath) == emptyLegacy,"legacy detection does not repair or write usage")
         try FileManager.default.removeItem(at:absentDailyPath)
-        try check(try fullStore.fingerprint() == absentDailyRevision,
-                  "restoring recorded Daily absence restores exact precreation revision")
+        try privateWrite(AppTotalFixtures.bytes(AppTotalFixtures.document(start:0,duration:86400)),absentDailyPath)
+        try check(try fullStore.prepareAppTotals(ApplyRequest(start:0,end:86400,sessions:[],revision:absentDailyRevision)).count == 29,
+            "genuine regenerated native baseline not blanket rejected by historical absence archive")
         // Restore all cache fixtures for independent legacy tests below.
         try FileManager.default.removeItem(at:cache)
         try AppTotalFixtures.create(cache)
@@ -427,13 +433,20 @@ import Darwin
             bothManifest.absent.contains { $0.originalPath == path.path }
         }, "both missing records and both missing metadata explicitly archived as absence")
         try check(try fullStore.verifyBackup(bothBackup) == bothRevision, "both-missing backup independently verified")
-        let bothPlans = try fullStore.prepareAppTotals(ApplyRequest(start:0,end:86400,sessions:[],revision:bothRevision))
-        let missingPlans = bothPlans.filter { $0.original == nil }
-        for plan in missingPlans { try fullStore.writeAppTotal(plan) }
-        try check(try fullStore.fingerprint() != bothRevision, "all exclusive creations change bound revision")
-        for plan in missingPlans { try FileManager.default.removeItem(at:plan.path) }
-        try check(try fullStore.fingerprint() == bothRevision, "restoring all recorded absences restores exact source revision")
-        try check(try fullStore.verifyBackup(bothBackup) == bothRevision, "both-missing archive stays verified through creation and restore")
+        try rejects("production missing Weekly rejects unknown history instead of zero filling") {
+            _ = try fullStore.prepareAppTotals(ApplyRequest(start:0,end:86400,sessions:[],revision:bothRevision))
+        }
+        let archiveCount = try FileManager.default.contentsOfDirectory(atPath:fullStore.backups.path).count
+        let noUsageBefore = try boundedBytes(usagePath), noLightBefore = try boundedBytes(backlightPath)
+        try rejects("shipping Apply missing Weekly fails before backup or any source writes") {
+            _ = try fullStore.apply(ApplyRequest(start:0,end:86400,sessions:[],revision:bothRevision))
+        }
+        try check(try FileManager.default.contentsOfDirectory(atPath:fullStore.backups.path).count == archiveCount,
+            "unknown history shipping Apply creates no backup")
+        try check(try boundedBytes(usagePath) == noUsageBefore && boundedBytes(backlightPath) == noLightBefore,
+            "unknown history shipping Apply leaves stream bytes unchanged")
+        try check(try fullStore.fingerprint() == bothRevision,"both missing no source writes")
+        try check(try fullStore.verifyBackup(bothBackup) == bothRevision,"absence archive remains verified")
         try FileManager.default.removeItem(at:cache)
         try AppTotalFixtures.create(cache)
         let preBacklightRace = try boundedBytes(backlightPath)

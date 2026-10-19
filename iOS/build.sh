@@ -41,7 +41,7 @@ xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -O -D HOST_STOR
 "$OUT/gemini-route-checks"
 xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -O -D HOST_STORAGE_TEST -parse-as-library Core/*.swift Tests/NativeAggregateChecks.swift -framework CryptoKit -lsqlite3 -lz -o "$OUT/native-aggregate-checks"
 "$OUT/native-aggregate-checks"
-xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -O -D HOST_STORAGE_TEST -parse-as-library Core/*.swift Tests/AppTotalChecks.swift Tests/AppTotalFixtures.swift -framework CryptoKit -lsqlite3 -lz -o "$OUT/app-total-checks"
+xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -O -D NATIVE_PLAN_FIXTURE -parse-as-library Core/*.swift Tests/AppTotalChecks.swift Tests/AppTotalFixtures.swift -framework CryptoKit -lsqlite3 -lz -o "$OUT/app-total-checks"
 "$OUT/app-total-checks"
 xcrun --sdk macosx swiftc -sdk "$HOSTSDK" -target "$HOST_TARGET" -O -D HOST_STORAGE_TEST -parse-as-library Core/*.swift Tests/GeminiAllocationChecks.swift -framework CryptoKit -lsqlite3 -lz -o "$OUT/gemini-allocation-checks"
 "$OUT/gemini-allocation-checks"

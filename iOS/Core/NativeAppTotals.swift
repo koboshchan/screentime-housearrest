@@ -75,15 +75,15 @@ enum NativeAppTotals {
         var present = Set<String>()
         for i in categories.indices {
             var entries = categories[i]["applicationActivities"] as! [[String: Any]]
-            var sum = 0.0
             for j in entries.indices {
                 let bundle = entries[j]["bundleIdentifier"] as! String
                 let amount = try seconds(totals[bundle] ?? 0)
-                entries[j]["totalActivityDuration"] = amount
-                sum += amount; present.insert(bundle)
+                if try seconds(entries[j]["totalActivityDuration"]) != amount {
+                    entries[j]["totalActivityDuration"] = amount
+                }
+                present.insert(bundle)
             }
             categories[i]["applicationActivities"] = entries
-            categories[i]["totalActivityDuration"] = sum
         }
         for bundle in totals.keys.sorted() where !present.contains(bundle) {
             let amount = try seconds(totals[bundle])
@@ -97,11 +97,12 @@ enum NativeAppTotals {
             if let index = categories.firstIndex(where: { $0["identifier"] as? String == id }) {
                 var entries = categories[index]["applicationActivities"] as! [[String: Any]]
                 entries.append(entry); categories[index]["applicationActivities"] = entries
-                categories[index]["totalActivityDuration"] = try seconds(categories[index]["totalActivityDuration"]) + amount
             } else {
                 var category = template.category
                 category["applicationActivities"] = [entry]; category["webDomainActivities"] = [[String: Any]]()
-                category["totalActivityDuration"] = amount
+                // No native category aggregate exists in this segment. Do not
+                // invent or copy a different interval's category total.
+                category["totalActivityDuration"] = 0.0
                 categories.append(category)
             }
         }
@@ -209,12 +210,6 @@ extension NativeStorage {
     /// All cache planning and schema checks happen BEFORE the verified backup.
     /// Missing/ambiguous layouts fail closed rather than falling back to a union.
     func prepareAppTotals(_ request: ApplyRequest, now: Date = Date()) throws -> [NativeCacheWrite] {
-        #if !HOST_STORAGE_TEST
-        // Unconditional privileged denial, before reads, backup or mutation.
-        // HOST_STORAGE_TEST runs historical algorithms on disposable fixtures only.
-        try NativeApplySafety.requireValidatedBaseline()
-        #endif
-
         let roots = try cacheRoots()
         try requireStorage(roots.count == 1, "Expected one local DeviceActivity cache. Open Settings Screen Time, then reload.", "unsupported_schema")
         let root = roots[0]
@@ -223,8 +218,8 @@ extension NativeStorage {
         for granularity in ["Hourly", "Daily", "Weekly"] {
             let directory = root.appendingPathComponent(granularity + "/ActivitySegments")
             try rejectLinks(directory)
-            // Missing Daily/Weekly records and metadata are synthesized only
-            // inside existing native directories. Never create arbitrary trees.
+            // Sparse Hourly buckets can be created inside the selected day.
+            // Daily/Weekly baselines are never synthesized from sparse history.
             var info = stat()
             if lstat(directory.path,&info) != 0 {
                 try requireStorage(errno == ENOENT,
@@ -258,114 +253,25 @@ extension NativeStorage {
         }
         let weekly = segments["Weekly"]?.first(where: { $0.2.start <= request.start && $0.2.end >= request.end })
         let daily = segments["Daily"]?.first(where: { abs($0.2.start-request.start) < 0.01 && abs($0.2.end-request.end) < 0.01 })
-        let dayTotals = NativeAppTotals.durations(request, start: request.start, end: request.end)
-        var oldDay: [String: Double]
-        var dailySegment: NativeAppTotals.SegmentValue
-        if let daily {
-            oldDay = try NativeAppTotals.apps(daily.2.value).mapValues { $0.duration }
-            dailySegment = daily.2
-        } else {
-            // The hourly files are sparse native observations, not replacement
-            // sessions. Their exact per-app sum is the OLD selected-day baseline.
-            // Never subtract the new requested totals or a whole Weekly record.
-            try requireStorage(!segments["Daily", default: []].contains { $0.2.start < request.end && $0.2.end > request.start },
-                               "Conflicting Daily cache interval.", "unsupported_schema")
-            oldDay = [:]
-            let selected = hours.filter { $0.2.start < request.end && $0.2.end > request.start }
-            try requireStorage(!selected.isEmpty, "No observed hourly baseline for missing Daily cache.", "unsupported_schema")
-            for hour in selected {
-                let offset = (hour.2.start-request.start)/3600
-                try requireStorage(hour.2.start >= request.start && hour.2.end <= request.end &&
-                    abs(hour.2.end-hour.2.start-3600) < 0.001 && abs(offset.rounded()-offset) < 0.000001,
-                    "Unsafe hourly baseline for missing Daily cache.", "unsupported_schema")
-                for (bundle, app) in try NativeAppTotals.apps(hour.2.value) {
-                    oldDay[bundle, default: 0] += app.duration
-                    try requireStorage(oldDay[bundle]!.isFinite, "Hourly baseline overflow.", "unsupported_schema")
-                }
-            }
-            // Verify both cross-granularity templates before cloning the value.
-            _ = try NativeAppTotals.blank(template.2, start: request.start, duration: request.end-request.start)
-            dailySegment = try NativeAppTotals.blank(weekly?.2 ?? template.2, start: request.start, duration: request.end-request.start)
+        guard let daily, let weekly else {
+            throw StorageFailure("incomplete_baseline", "Native Daily and Weekly baselines are required. Missing observations are not zero. Open Settings Screen Time Day and Week, then reload. Nothing applied.")
         }
-        let dailyPath = daily?.0 ?? root.appendingPathComponent("Daily/ActivitySegments/")
-            .appendingPathComponent(String(format: "%.1f.plist", request.start))
-        var plans = [NativeCacheWrite(path: dailyPath, original: daily?.1,
-            replacement: try daily == nil
-                ? NativeAppTotals.synthesized(dailySegment, totals: dayTotals, catalog: catalog)
-                : NativeAppTotals.replacing(dailySegment, totals: dayTotals, catalog: catalog),
-            template: daily?.0 ?? template.0)]
-        var weekTotals: [String:Double]
-        var weeklySegment: NativeAppTotals.SegmentValue
-        var weeklyPath: URL
-        if let weekly {
-            weeklySegment = weekly.2; weeklyPath = weekly.0
-            weekTotals = try NativeAppTotals.apps(weekly.2.value).mapValues { $0.duration }
-            for bundle in Set(oldDay.keys).union(dayTotals.keys) {
-                let outside = (weekTotals[bundle] ?? 0) - (oldDay[bundle] ?? 0)
-                try requireStorage(outside >= -0.01 && outside.isFinite,
-                                   "Weekly app cache is inconsistent with selected-day baseline; nothing applied.", "unsupported_schema")
-                weekTotals[bundle] = max(0,outside) + (dayTotals[bundle] ?? 0)
-            }
-        } else {
-            let calendar = try cacheCalendar(root)
-            let selectedDate = Date(timeIntervalSinceReferenceDate:request.start)
-            try requireStorage(calendar.startOfDay(for:selectedDate) == selectedDate &&
-                calendar.date(byAdding:.day,value:1,to:selectedDate)?.timeIntervalSinceReferenceDate == request.end,
-                "Edit does not match native local day.", "unsupported_schema")
-            guard let interval = calendar.dateInterval(of:.weekOfYear,for:selectedDate) else {
-                throw StorageFailure("unsupported_schema","Cannot resolve native week boundary.")
-            }
-            let lo = interval.start.timeIntervalSinceReferenceDate, hi = interval.end.timeIntervalSinceReferenceDate
-            try requireStorage(lo <= request.start && hi >= request.end &&
-                !segments["Weekly",default:[]].contains { $0.2.start < hi && $0.2.end > lo },
-                "Conflicting Weekly cache interval.", "unsupported_schema")
-            weeklySegment = try NativeAppTotals.blank(template.2,start:lo,duration:hi-lo)
-            weeklyPath = root.appendingPathComponent("Weekly/ActivitySegments/")
-                .appendingPathComponent(String(format:"%.1f.plist",lo))
-            // Preserve EVERY observed outside-day app duration. Prefer a native
-            // Daily baseline where present, otherwise sum its non-overlapping
-            // Hourly observations. Missing observations are not invented usage.
-            // Never double-count the same day's Daily + Hourly cache.
-            weekTotals = dayTotals
-            var cursor = interval.start
-            while cursor < interval.end {
-                guard let next = calendar.date(byAdding:.day,value:1,to:cursor) else {
-                    throw StorageFailure("unsupported_schema","Invalid native week day.")
-                }
-                let start = cursor.timeIntervalSinceReferenceDate, end = next.timeIntervalSinceReferenceDate
-                if abs(start-request.start) >= 0.01 {
-                    let dayRecords = segments["Daily",default:[]].filter { $0.2.start < end && $0.2.end > start }
-                    let hourRecords = hours.filter { $0.2.start < end && $0.2.end > start }
-                    var baseline: [String:Double] = [:]
-                    for hour in hourRecords {
-                        let offset = (hour.2.start-start)/3600
-                        try requireStorage(hour.2.start >= start && hour.2.end <= end &&
-                            abs(hour.2.end-hour.2.start-3600) < 0.001 && abs(offset.rounded()-offset) < 0.000001,
-                            "Unsafe outside-day hourly baseline.", "unsupported_schema")
-                        for (bundle,app) in try NativeAppTotals.apps(hour.2.value) { baseline[bundle,default:0] += app.duration }
-                    }
-                    if let day = dayRecords.first {
-                        try requireStorage(dayRecords.count == 1 && abs(day.2.start-start) < 0.01 && abs(day.2.end-end) < 0.01,
-                            "Conflicting outside-day Daily interval.", "unsupported_schema")
-                        let dailyTotals = try NativeAppTotals.apps(day.2.value).mapValues { $0.duration }
-                        // Daily may include more hours, but cannot erase any
-                        // already observed per-app hourly contribution.
-                        try requireStorage(baseline.allSatisfy { (dailyTotals[$0.key] ?? 0) + 0.01 >= $0.value },
-                            "Outside-day Daily/Hourly totals disagree.", "unsupported_schema")
-                        baseline = dailyTotals
-                    }
-                    for (bundle,amount) in baseline { weekTotals[bundle,default:0] += amount }
-                }
-                cursor = next
-            }
+        try rejectPreviouslySynthesized([daily, weekly], root: root)
+        let dayTotals = NativeAppTotals.durations(request, start: request.start, end: request.end)
+        let oldDay = try NativeAppTotals.apps(daily.2.value).mapValues { $0.duration }
+        var plans = [NativeCacheWrite(path: daily.0, original: daily.1,
+            replacement: try NativeAppTotals.replacing(daily.2, totals: dayTotals, catalog: catalog), template: daily.0)]
+        var weekTotals = try NativeAppTotals.apps(weekly.2.value).mapValues { $0.duration }
+        for bundle in Set(oldDay.keys).union(dayTotals.keys) {
+            let outside = (weekTotals[bundle] ?? 0) - (oldDay[bundle] ?? 0)
+            try requireStorage(outside >= -0.01 && outside.isFinite,
+                "Weekly app cache is inconsistent with selected-day baseline; nothing applied.", "unsupported_schema")
+            weekTotals[bundle] = max(0, outside) + (dayTotals[bundle] ?? 0)
         }
         try requireStorage(weekTotals.values.allSatisfy { $0.isFinite && $0 >= 0 },
                            "Weekly app total overflow.", "unsupported_schema")
-        plans.append(NativeCacheWrite(path: weeklyPath, original: weekly?.1,
-            replacement: try weekly == nil
-                ? NativeAppTotals.synthesized(weeklySegment, totals: weekTotals, catalog:catalog)
-                : NativeAppTotals.replacing(weeklySegment, totals: weekTotals, catalog:catalog),
-            template:weekly?.0 ?? template.0))
+        plans.append(NativeCacheWrite(path: weekly.0, original: weekly.1,
+            replacement: try NativeAppTotals.replacing(weekly.2, totals: weekTotals, catalog: catalog), template: weekly.0))
         // DST days are 23/24/25 buckets. No fixed date or hardcoded device ID.
         let count = (request.end - request.start) / 3600
         try requireStorage(count >= 1 && count <= 25 && abs(count.rounded()-count) < 0.0001,
@@ -390,8 +296,6 @@ extension NativeStorage {
         // Future lastUpdatedDate is the Gemini bypass. Preserve any longer
         // existing freeze, and also cover edits whose end is later than now.
         let until = Date(timeIntervalSinceReferenceDate: max(now.timeIntervalSinceReferenceDate, request.end) + 30 * 86400)
-        let hourlyMetadataPath = root.appendingPathComponent("Hourly/Metadata.plist")
-        let hourlyMetadata = try boundedBytes(hourlyMetadataPath)
         for granularity in ["Hourly", "Daily", "Weekly"] {
             let path = root.appendingPathComponent(granularity + "/Metadata.plist")
             try rejectLinks(path)
@@ -401,14 +305,82 @@ extension NativeStorage {
                 plans.append(NativeCacheWrite(path:path,original:old,
                     replacement:try NativeAppTotals.metadata(old,until:until),template:path))
             } else {
-                try requireStorage(errno == ENOENT && granularity != "Hourly","Cannot inspect native metadata.","read_failed")
-                plans.append(NativeCacheWrite(path:path,original:nil,
-                    replacement:try NativeAppTotals.synthesizedMetadata(hourlyMetadata,granularity:granularity,until:until),
-                    template:hourlyMetadataPath))
+                throw StorageFailure("incomplete_baseline", "Native refresh metadata is missing; nothing applied.")
             }
         }
         try requireStorage(Set(plans.map { $0.path.path }).count == plans.count, "Duplicate cache write plan.", "unsupported_schema")
         return plans  // metadata is last, only after every segment is written
+    }
+
+    /// Old releases could create Daily/Weekly from sparse Hourly observations.
+    /// An authenticated absence archive plus the exact identity-stripped legacy
+    /// output shape is evidence, unlike a future refresh timestamp on its own.
+    func rejectPreviouslySynthesized(_ records: [(URL, Data, NativeAppTotals.SegmentValue)], root: URL) throws {
+        let records = records.filter {
+            $0.2.value["recordSystemFields"] == nil && $0.2.value["firstPickup"] == nil && $0.2.value["longestActivity"] == nil
+        }
+        if records.isEmpty { return }
+        try rejectLinks(backups)
+        var info = stat()
+        if lstat(backups.path, &info) != 0 {
+            try requireStorage(errno == ENOENT, "Cannot inspect backup provenance.", "read_failed")
+            return
+        }
+        let archives = try FileManager.default.contentsOfDirectory(at: backups, includingPropertiesForKeys: nil)
+        try requireStorage(archives.count <= 1000, "Too many backup provenance records.", "size_limit")
+        for archive in archives where UUID(uuidString: archive.lastPathComponent) != nil {
+            let manifestURL = archive.appendingPathComponent("manifest.json")
+            try rejectLinks(manifestURL)
+            var status = stat()
+            if lstat(manifestURL.path, &status) != 0 {
+                try requireStorage(errno == ENOENT, "Cannot inspect backup manifest.", "read_failed")
+                continue // An interrupted archive has no committed manifest.
+            }
+            let manifest = try JSONDecoder().decode(BackupManifest.self, from: boundedBytes(manifestURL, maximum: 16*1024*1024))
+            let candidates = records.filter { record in manifest.absent.contains { $0.originalPath == record.0.path } }
+            if candidates.isEmpty { continue }
+            _ = try verifyBackup(archive.lastPathComponent)
+            let sourceFiles = manifest.files.filter { file in
+                ["Hourly", "Daily", "Weekly"].contains { file.originalPath.hasPrefix(root.path + "/" + $0 + "/ActivitySegments/") }
+            }
+            var catalog: [String: NativeAppTotals.App] = [:]
+            var templates: [NativeAppTotals.SegmentValue] = []
+            let order = ["Hourly", "Daily", "Weekly"]
+            let orderedFiles = sourceFiles.sorted { a, b in
+                func rank(_ file: BackupFile) -> Int {
+                    order.firstIndex { file.originalPath.contains("/" + $0 + "/ActivitySegments/") } ?? 3
+                }
+                return rank(a) == rank(b) ? a.originalPath < b.originalPath : rank(a) < rank(b)
+            }
+            for file in orderedFiles {
+                let segment = try NativeAppTotals.SegmentValue(boundedBytes(archive.appendingPathComponent(file.name)))
+                if file.originalPath.hasPrefix(root.path + "/Hourly/ActivitySegments/") { templates.append(segment) }
+                for (bundle, app) in try NativeAppTotals.apps(segment.value) { catalog[bundle] = app }
+            }
+            for record in candidates {
+                let totals = try NativeAppTotals.apps(record.2.value).mapValues { $0.duration }
+                guard totals.keys.allSatisfy({ catalog[$0] != nil }) else { continue }
+                for template in templates {
+                    let blank = try NativeAppTotals.blank(template, start: record.2.start, duration: record.2.end-record.2.start)
+                    // Recreate the former app-sum category writer only to identify
+                    // its old output. This data is NEVER a write plan.
+                    let data = try NativeAppTotals.synthesized(blank, totals: totals, catalog: catalog)
+                    var legacy = try NativeAppTotals.SegmentValue(data).document
+                    var value = legacy["value"] as! [String: Any]
+                    var categories = value["categoryActivities"] as! [[String: Any]]
+                    for i in categories.indices {
+                        let entries = categories[i]["applicationActivities"] as! [[String: Any]]
+                        categories[i]["totalActivityDuration"] = try entries.reduce(0.0) {
+                            try $0 + NativeAppTotals.seconds($1["totalActivityDuration"])
+                        }
+                    }
+                    value["categoryActivities"] = categories; legacy["value"] = value
+                    if NSDictionary(dictionary: legacy).isEqual(to: record.2.document) {
+                        throw StorageFailure("untrusted_baseline", "A verified backup identifies this as a legacy synthesized baseline with unknown history. Regenerate native Day and Week caches before applying. Nothing applied.")
+                    }
+                }
+            }
+        }
     }
 
     func writeAppTotal(_ plan: NativeCacheWrite) throws {
@@ -433,14 +405,5 @@ extension NativeStorage {
             }
         }
         try requireStorage(fsync(fd) == 0, "Cache sync failed.", "partial_apply_failed")
-    }
-}
-
-// Emergency quarantine: no cache presence or metadata proves completeness.
-// Existing Daily/Weekly files may have been synthesized by older Surface builds.
-// Category semantics and cloud propagation are not yet independently validated.
-enum NativeApplySafety {
-    static func requireValidatedBaseline() throws {
-        throw StorageFailure("apply_quarantined", "Apply is disabled: weekly history completeness, prior synthesized caches, and category semantics cannot yet be verified. Nothing applied. Existing data and backups are unchanged.")
     }
 }

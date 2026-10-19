@@ -352,7 +352,7 @@ public final class NativeStorage {
     private init(fixedDatabase database: URL, stream: URL, backups: URL, lockStream: URL? = nil, backlightStream: URL? = nil, groupRoot: URL? = nil, refreshRunner: @escaping ([String]) throws -> Void = { _ in }) {
         self.database = database; self.stream = stream; self.backups = backups; self.lockStream = lockStream; self.backlightStream = backlightStream; self.groupRoot = groupRoot; self.refreshRunner = refreshRunner
     }
-    #if HOST_STORAGE_TEST
+    #if HOST_STORAGE_TEST || NATIVE_PLAN_FIXTURE
     // Excluded from shipping app/helper. There is no path input in the wire protocol.
     convenience init(database: URL, stream: URL, backups: URL, lockStream: URL? = nil, backlightStream: URL? = nil, groupRoot: URL? = nil, runner: @escaping ([String]) throws -> Void = { _ in }) {
         self.init(fixedDatabase:database,stream:stream,backups:backups,lockStream:lockStream,backlightStream:backlightStream,groupRoot:groupRoot,refreshRunner:runner)
