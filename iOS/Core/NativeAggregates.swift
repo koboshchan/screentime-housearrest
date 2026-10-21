@@ -3,6 +3,11 @@ import Foundation
 /// Native Screen Time also folds dangling AppUsage starts and Backlight state.
 /// Keep Gemini's reader/writer, correcting those aggregate inputs before refresh.
 enum NativeAggregates {
+    // Both clocks are native timestamps, but dispatch into SEGB is not atomic.
+    // XS Max iOS 18.3 read-only capture contains a valid 12.402ms lag.
+    // Retain a bounded 20ms guard; edit-boundary and ordering checks below
+    // remain mandatory, even when the lag is within this tolerance.
+    static let maximumBacklightCaptureSkew = 0.020
     static func ordered(_ records: [SegmentRecord]) -> [SegmentRecord] {
         records.enumerated().sorted {
             $0.element.timestamp == $1.element.timestamp ? $0.offset < $1.offset : $0.element.timestamp < $1.element.timestamp
@@ -31,7 +36,7 @@ enum NativeAggregates {
                            "Unsupported Backlight payload; nothing applied.","unsupported_schema")
         let clock = Double(bitPattern:data.le64(1))
         try validClock(clock)
-        try requireStorage(abs(clock-record.timestamp) < 0.005,"Backlight clocks disagree; nothing applied.","unsupported_schema")
+        try requireStorage(abs(clock-record.timestamp) < maximumBacklightCaptureSkew,"Backlight clocks disagree; nothing applied.","unsupported_schema")
         return data[10] == 1
     }
     static func backlight(_ original: Data, history: [SegmentRecord], request: ApplyRequest,
@@ -40,7 +45,7 @@ enum NativeAggregates {
         var segment = try Segment.parse(original)
         let active = ordered(history.filter { $0.state == 1 })
         // Native capture observed independent envelope/payload clocks differing
-        // by 1-3ms. Allow only bounded sub-5ms capture skew, never a different
+        // by up to 12.402ms. Allow only bounded sub-20ms capture skew, never a different
         // side of an edit/restore boundary or a different event ordering.
         let boundaries = [request.start,request.end] + preserved.flatMap { [$0.start,$0.end] }
         var previousClock: Double?

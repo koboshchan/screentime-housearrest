@@ -88,14 +88,14 @@ import Darwin
             _ = try NativeAggregates.backlight(original,history:[SegmentRecord(timestamp:1,payload:NativeAggregates.backlightPayload(2,true))],request:empty,now:500)
         }
         let skewed = [
-            SegmentRecord(timestamp:50,flag:77,payload:try NativeAggregates.backlightPayload(49.9982,true)),
+            SegmentRecord(timestamp:50,flag:77,payload:try NativeAggregates.backlightPayload(49.9875979423523,true)),
             SegmentRecord(timestamp:180,payload:try NativeAggregates.backlightPayload(179.9977,false)),
             SegmentRecord(timestamp:420,flag:91,payload:try NativeAggregates.backlightPayload(419.9989,true))]
         let skewedData = try Segment(created:0,size:4096,records:skewed).encoded()
         let skewedResult = try Segment.parse(NativeAggregates.backlight(skewedData,history:skewed,request:empty,now:500))
         try check(skewedResult.records.first?.payload == skewed[0].payload && skewedResult.records.first?.flag == 77 &&
                   skewedResult.records.last?.payload == skewed[2].payload && skewedResult.records.last?.flag == 91,
-                  "bounded native capture skew retains outside bytes and flags")
+                  "observed 12.402ms native capture skew retains outside bytes and flags")
         try check(try !NativeAggregates.backlightState(skewedResult.records.first { $0.timestamp == 400 }!),
                   "bounded skew retains elapsed restore state")
         for edge in [100.0,400.0] {
@@ -120,7 +120,17 @@ import Darwin
                                               preserved:[StoredSession(bundle:"com.example.before",start:80,end:90)])
         }
         try rejects("capture skew at cap fails closed") {
-            _ = try NativeAggregates.backlightState(SegmentRecord(timestamp:1,payload:NativeAggregates.backlightPayload(1.006,true)))
+            _ = try NativeAggregates.backlightState(SegmentRecord(timestamp:1,payload:NativeAggregates.backlightPayload(1.021,true)))
+        }
+        let delayedBoundary = SegmentRecord(timestamp:100.006,payload:try NativeAggregates.backlightPayload(99.9935979423523,true))
+        try rejects("observed native lag crossing edit boundary still fails closed") {
+            _ = try NativeAggregates.backlight(skewedData,history:skewed+[delayedBoundary],request:empty,now:500)
+        }
+        let delayedReorder = [
+            SegmentRecord(timestamp:50,payload:try NativeAggregates.backlightPayload(49.999,true)),
+            SegmentRecord(timestamp:50.001,payload:try NativeAggregates.backlightPayload(49.9885979423523,false))]
+        try rejects("observed native lag reversing order still fails closed") {
+            _ = try NativeAggregates.backlight(skewedData,history:delayedReorder,request:empty,now:500)
         }
         var corrupt = original; corrupt[40] ^= 1
         try rejects("CRC rejected") { _ = try Segment.parse(corrupt) }
