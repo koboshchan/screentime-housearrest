@@ -58,12 +58,13 @@ enum AppTotalFixtures {
         var hourlyDoc = try PropertyListSerialization.propertyList(from:boundedBytes(hourlyPath),format:nil) as! [String:Any]
         var hourlyValue = hourlyDoc["value"] as! [String:Any]
         hourlyValue.removeValue(forKey:"untouched")
-        hourlyValue["device"] = ["identifier":identifier]
+        hourlyValue["device"] = ["identifier":identifier,"coreDuetIdentifier":identifier,"name":"Fixture","model":1]
+        hourlyValue["user"] = ["role":0,"appleID":"fixture@example.invalid","altDSID":"fixture","nameComponents":[:]]
         hourlyValue["lastUpdatedDate"] = Date(timeIntervalSinceReferenceDate:today)
         hourlyDoc["value"] = hourlyValue
         try FileManager.default.removeItem(at:hourlyPath)
         try privateWrite(bytes(hourlyDoc),hourlyPath)
-        for gran in ["Daily","Weekly"] {
+        for gran in ["Hourly","Daily","Weekly"] {
             let target = cloud.appendingPathComponent(gran+"/ActivitySegments")
             try FileManager.default.createDirectory(at:target,withIntermediateDirectories:true)
             let zone = identifier+"_"+gran
@@ -103,6 +104,7 @@ enum AppTotalFixtures {
             var value = doc["value"] as! [String:Any]
             value.removeValue(forKey:"untouched")
             value["device"] = hourlyValue["device"]
+            value["user"] = hourlyValue["user"]
             value["lastUpdatedDate"] = Date(timeIntervalSinceReferenceDate:today)
             value["recordSystemFields"] = identity(zone,"Metadata")
             doc["value"] = value

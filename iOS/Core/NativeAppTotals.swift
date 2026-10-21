@@ -269,6 +269,25 @@ extension NativeStorage {
         return matches.first
     }
 
+    /// Bootstrap is deliberately limited to an existing, entirely empty Local
+    /// layout. A partial cache is not permission to replace native provenance.
+    func cloudOnlyLayout(_ root: URL) throws -> Bool {
+        var empty = true
+        for granularity in ["Hourly","Daily","Weekly"] {
+            let directory = root.appendingPathComponent(granularity+"/ActivitySegments")
+            try rejectLinks(directory)
+            var info = stat()
+            try requireStorage(lstat(directory.path,&info) == 0 && info.st_mode & S_IFMT == S_IFDIR,
+                "Native cache directories must already exist; nothing applied.","cache_not_ready")
+            if !(try FileManager.default.contentsOfDirectory(at:directory,includingPropertiesForKeys:nil)).isEmpty { empty = false }
+            let metadata = root.appendingPathComponent(granularity+"/Metadata.plist")
+            try rejectLinks(metadata)
+            if lstat(metadata.path,&info) == 0 { empty = false }
+            else { try requireStorage(errno == ENOENT,"Cannot inspect cache metadata.","read_failed") }
+        }
+        return empty
+    }
+
     func cloudBaseline(_ root: URL, granularity: String, start: Double, end: Double,
                        now: Date) throws -> NativeAppTotals.SegmentValue {
         guard let cloud = try sameDeviceCloudRoot(root) else {
@@ -282,7 +301,8 @@ extension NativeStorage {
             }
             return value
         }
-        let hourly = try metadataValue(root.appendingPathComponent("Hourly/Metadata.plist"))
+        let bootstrap = try cloudOnlyLayout(root)
+        let hourly = try metadataValue((bootstrap ? cloud : root).appendingPathComponent("Hourly/Metadata.plist"))
         let meta = try metadataValue(cloud.appendingPathComponent(granularity+"/Metadata.plist"))
         let expected = identifier+"_"+granularity
         let metadataKeys: Set<String> = ["device","user","lastUpdatedDate","recordName","recordSystemFields","segmentInterval"]
@@ -297,16 +317,28 @@ extension NativeStorage {
               hourly["recordName"] as? String == identifier+"_Hourly",
               meta["recordName"] as? String == expected,
               let interval = meta["segmentInterval"] as? NSNumber, CFGetTypeID(interval) != CFBooleanGetTypeID(),
-              interval.doubleValue == (granularity == "Daily" ? 1 : 2),
+              interval.doubleValue == (granularity == "Hourly" ? 0 : (granularity == "Daily" ? 1 : 2)),
               let localDate = hourly["lastUpdatedDate"] as? Date,
               let cloudDate = meta["lastUpdatedDate"] as? Date,
               localDate.timeIntervalSinceReferenceDate.isFinite, cloudDate.timeIntervalSinceReferenceDate.isFinite,
               cloudDate <= now, localDate <= now,
               cloudDate >= (try cacheCalendar(root)).startOfDay(for:now),
+              !bootstrap || (cloudDate == localDate && now.timeIntervalSince(cloudDate) <= 3600),
               cloudDate.timeIntervalSinceReferenceDate >= start else {
             throw StorageFailure("untrusted_baseline","Cloud baseline predates today or does not match local device/user provenance; nothing applied.")
         }
         try NativeAppTotals.cloudIdentity(meta,name:expected,zone:expected,type:"Metadata")
+        if bootstrap {
+            let deviceKeys: Set<String> = ["identifier","coreDuetIdentifier","name","model"]
+            let userKeys: Set<String> = ["altDSID","appleID","nameComponents","role"]
+            try requireStorage(Set(hourly.keys) == metadataKeys &&
+                Set(device.keys) == deviceKeys && device["coreDuetIdentifier"] is String &&
+                device["name"] is String && device["model"] is NSNumber &&
+                Set(user.keys) == userKeys && user["altDSID"] is String &&
+                user["appleID"] is String && user["nameComponents"] is [String:Any] &&
+                user["role"] is NSNumber,"Unknown Cloud Hourly metadata schema.","unsupported_schema")
+            try NativeAppTotals.cloudIdentity(hourly,name:identifier+"_Hourly",zone:identifier+"_Hourly",type:"Metadata")
+        }
         let path = cloud.appendingPathComponent(granularity+"/ActivitySegments/"+String(format:"%.1f.plist",start))
         let segment = try NativeAppTotals.SegmentValue(boundedBytes(path))
         let segmentKeys: Set<String> = ["recordZoneName","recordSystemFields","dateInterval","categoryActivities",
@@ -319,6 +351,13 @@ extension NativeStorage {
         var document = NativeAppTotals.withoutRecordIdentity(segment.document) as! [String:Any]
         var value = document["value"] as! [String:Any]
         // CloudKit zone identities are not valid in Local. Keep Local's envelope.
+        if bootstrap {
+            // Native Local uses the same device/granularity zone name but never
+            // carries the Cloud record's secure system identity.
+            value["recordZoneName"] = expected
+            document["value"] = value
+            return try NativeAppTotals.SegmentValue(PropertyListSerialization.data(fromPropertyList:document,format:.binary,options:0))
+        }
         let hourPaths = try FileManager.default.contentsOfDirectory(at:root.appendingPathComponent("Hourly/ActivitySegments"),includingPropertiesForKeys:nil)
             .filter { $0.pathExtension == "plist" }.sorted { $0.path < $1.path }
         guard let first = hourPaths.first else { throw StorageFailure("incomplete_baseline","Missing Local envelope.") }
@@ -384,6 +423,7 @@ extension NativeStorage {
         let roots = try cacheRoots()
         try requireStorage(roots.count == 1, "Expected one local DeviceActivity cache. Open Settings Screen Time, then reload.", "unsupported_schema")
         let root = roots[0]
+        let bootstrap = try cloudOnlyLayout(root)
         var segments: [String: [(URL, Data, NativeAppTotals.SegmentValue)]] = [:]
         var catalog: [String: NativeAppTotals.App] = [:]
         for granularity in ["Hourly", "Daily", "Weekly"] {
@@ -400,7 +440,7 @@ extension NativeStorage {
             try requireStorage(info.st_mode & S_IFMT == S_IFDIR,"Unsupported DeviceActivity directory; nothing applied.","unsafe_path")
             let paths = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
                 .filter { $0.pathExtension == "plist" }.sorted { $0.path < $1.path }
-            try requireStorage(granularity != "Hourly" || !paths.isEmpty,
+            try requireStorage(bootstrap || granularity != "Hourly" || !paths.isEmpty,
                                "DeviceActivity \(granularity) cache is not generated yet. Open Settings > Screen Time and view both Day and Week, then return to Surface and reload. Nothing applied.","cache_not_ready")
             try requireStorage(paths.count <= 10000,"Too many DeviceActivity cache segments.","size_limit")
             var list: [(URL, Data, NativeAppTotals.SegmentValue)] = []
@@ -419,7 +459,23 @@ extension NativeStorage {
             }
             segments[granularity] = list
         }
-        guard let hours = segments["Hourly"], let template = hours.first else {
+        let hours = segments["Hourly"] ?? []
+        let template: (URL,Data,NativeAppTotals.SegmentValue)
+        if let local = hours.first { template = local }
+        else if bootstrap, let cloud = try sameDeviceCloudRoot(root) {
+            let directory = cloud.appendingPathComponent("Hourly/ActivitySegments")
+            try rejectLinks(directory)
+            let paths = try FileManager.default.contentsOfDirectory(at:directory,includingPropertiesForKeys:nil)
+                .filter { $0.pathExtension == "plist" }.sorted { $0.path < $1.path }
+            try requireStorage(!paths.isEmpty && paths.count <= 10000,"Missing native Cloud Hourly template.","incomplete_baseline")
+            guard let path = paths.last, let stamp = Double(path.deletingPathExtension().lastPathComponent) else {
+                throw StorageFailure("unsupported_schema","Invalid Cloud Hourly filename.")
+            }
+            let value = try cloudBaseline(root,granularity:"Hourly",start:stamp,end:stamp+3600,now:now)
+            try requireStorage(stamp <= now.timeIntervalSinceReferenceDate,"Future Cloud Hourly interval.","untrusted_baseline")
+            template = (path,try boundedBytes(path),value)
+            for (bundle,app) in try NativeAppTotals.apps(value.value) { catalog[bundle] = app }
+        } else {
             throw StorageFailure("unsupported_schema", "Verified Hourly cache template is required; nothing applied.")
         }
         let calendar = try cacheCalendar(root)
@@ -491,7 +547,7 @@ extension NativeStorage {
                 try requireStorage(!hours.contains { $0.2.start < end && $0.2.end > start }, "Conflicting hourly cache interval.", "unsupported_schema")
                 segment = try NativeAppTotals.blank(template.2, start: start, duration: 3600)
             }
-            let path = found?.0 ?? template.0.deletingLastPathComponent().appendingPathComponent(String(format: "%.1f.plist", start))
+            let path = found?.0 ?? root.appendingPathComponent("Hourly/ActivitySegments/"+String(format: "%.1f.plist", start))
             plans.append(NativeCacheWrite(path: path, original: found?.1,
                 replacement: try found == nil
                     ? NativeAppTotals.synthesized(segment, totals: NativeAppTotals.durations(request, start: start, end: end), catalog: catalog)
@@ -510,6 +566,17 @@ extension NativeStorage {
                 plans.append(NativeCacheWrite(path:path,original:old,
                     replacement:try NativeAppTotals.metadata(old,until:until),template:path))
             } else {
+                if bootstrap, errno == ENOENT, let cloud = try sameDeviceCloudRoot(root) {
+                    let source = cloud.appendingPathComponent(granularity+"/Metadata.plist")
+                    let document = try PropertyListSerialization.propertyList(from:boundedBytes(source),format:nil)
+                    let stripped = NativeAppTotals.withoutRecordIdentity(document) as! [String:Any]
+                    var value = stripped["value"] as! [String:Any]
+                    value["recordName"] = cloud.lastPathComponent+"_"+granularity
+                    let data = try PropertyListSerialization.data(fromPropertyList:["value":value],format:.binary,options:0)
+                    plans.append(NativeCacheWrite(path:path,original:nil,
+                        replacement:try NativeAppTotals.metadata(data,until:until),template:source))
+                    continue
+                }
                 try requireStorage(errno == ENOENT && granularity != "Hourly" &&
                     promoted.contains(where: { $0.path.contains("/"+granularity+"/") }),
                     "Native refresh metadata is missing; nothing applied.","incomplete_baseline")
@@ -520,6 +587,8 @@ extension NativeStorage {
             }
         }
         try requireStorage(Set(plans.map { $0.path.path }).count == plans.count, "Duplicate cache write plan.", "unsupported_schema")
+        try requireStorage(plans.allSatisfy { $0.path.path.hasPrefix(root.path+"/") },
+                           "Cache plan escaped Local; nothing applied.","unsafe_path")
         return plans  // metadata is last, only after every segment is written
     }
 

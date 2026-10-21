@@ -498,6 +498,32 @@ import Darwin
         try check(cloudMissing.allSatisfy { !FileManager.default.fileExists(atPath:$0.path) },
             "fixture restoration reinstates original Local absences rather than zero baselines")
         try check(try fullStore.fingerprint() == cloudRevision,"fixture restoration returns exact full source revision including Cloud")
+        // Verify a future real Apply would archive ALL Cloud proofs and all
+        // 29 absent Local destinations before creation. Disposable fixtures only.
+        for gran in ["Hourly","Daily","Weekly"] {
+            for path in try FileManager.default.contentsOfDirectory(at:cache.appendingPathComponent(gran+"/ActivitySegments"),includingPropertiesForKeys:nil) {
+                try FileManager.default.removeItem(at:path)
+            }
+            let metadata = cache.appendingPathComponent(gran+"/Metadata.plist")
+            if FileManager.default.fileExists(atPath:metadata.path) { try FileManager.default.removeItem(at:metadata) }
+        }
+        let bootRevision = try fullStore.fingerprint()
+        let bootPlan = try fullStore.prepareAppTotals(cloudRequest,now:Date(timeIntervalSinceReferenceDate:1000))
+        try check(try fullStore.fingerprint() == bootRevision,"empty Local planner has no source side effects")
+        let bootBackup = try fullStore.backup()
+        let bootArchive = fullStore.backups.appendingPathComponent(bootBackup)
+        let bootManifest = try JSONDecoder().decode(BackupManifest.self,from:boundedBytes(bootArchive.appendingPathComponent("manifest.json")))
+        try check(bootPlan.count == 29 && bootPlan.allSatisfy { plan in
+            plan.original == nil && bootManifest.absent.contains { $0.originalPath == plan.path.path }
+        },"Cloud-only verified backup explicitly binds every absent write destination")
+        try check(["Hourly","Daily","Weekly"].allSatisfy { gran in
+            bootManifest.files.contains { $0.originalPath == cloudSource.appendingPathComponent(gran+"/Metadata.plist").path } &&
+            bootManifest.files.contains { $0.originalPath.hasPrefix(cloudSource.appendingPathComponent(gran+"/ActivitySegments").path+"/") }
+        },"Cloud-only archive includes secure metadata and native segments for all granularities")
+        try check(try fullStore.verifyBackup(bootBackup) == bootRevision,"Cloud-only current backup independently verified")
+        for plan in bootPlan { try fullStore.writeAppTotal(plan) }
+        try check(try fullStore.verifyBackup(bootBackup) == bootRevision,"Cloud-only archive immutable after fixture writes")
+        try check(try boundedBytes(cloudMeta) == cloudMetaBefore,"Cloud-only fixture initialization preserves Cloud source bytes")
         try FileManager.default.removeItem(at:cache)
         try FileManager.default.removeItem(at:cloudSource.deletingLastPathComponent().deletingLastPathComponent())
         try FileManager.default.removeItem(at:cache.deletingLastPathComponent().appendingPathComponent("LocalDeviceIdentifier.plist"))

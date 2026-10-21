@@ -295,6 +295,88 @@ import Darwin
         try outsideStore.writeExisting(laterHourMeta,original:hourBefore,replacement:AppTotalFixtures.bytes(hourDoc))
         try check(try outsideStore.prepareAppTotals(outsideRequest,now:outsideNow).count == 29,
             "coherent fully covered Cloud snapshot survives independently newer Local Hourly")
+        // An entirely empty Local layout is initialized only from secure,
+        // fresh, exact-device Cloud records. Never run these writes on a device.
+        let bootGroup = base.appendingPathComponent("cloud-only")
+        let bootLocal = bootGroup.appendingPathComponent("fixture/Library/com.apple.DeviceActivity/Local")
+        try AppTotalFixtures.create(bootLocal)
+        let bootCloud = try AppTotalFixtures.cloud(bootLocal)
+        let bootStore = NativeStorage(database:base.appendingPathComponent("unused"),stream:base.appendingPathComponent("unused"),
+            backups:base.appendingPathComponent("bootstrap-backups"),groupRoot:bootGroup)
+        for gran in ["Hourly","Daily","Weekly"] {
+            let dir = bootLocal.appendingPathComponent(gran+"/ActivitySegments")
+            for path in try FileManager.default.contentsOfDirectory(at:dir,includingPropertiesForKeys:nil) {
+                try FileManager.default.removeItem(at:path)
+            }
+            try FileManager.default.removeItem(at:bootLocal.appendingPathComponent(gran+"/Metadata.plist"))
+        }
+        func cloudFiles() throws -> [String:Data] {
+            var result: [String:Data] = [:]
+            for case let path as URL in FileManager.default.enumerator(at:bootCloud,includingPropertiesForKeys:nil)! where path.pathExtension == "plist" {
+                result[path.path] = try boundedBytes(path)
+            }
+            return result
+        }
+        let bootSource = try cloudFiles()
+        let bootPlans = try bootStore.prepareAppTotals(request,now:cloudNow)
+        try check(bootPlans.count == 29 && bootPlans.allSatisfy { $0.original == nil && $0.path.path.hasPrefix(bootLocal.path+"/") },
+            "Cloud-only plans exactly 29 absent Local paths, never Cloud targets")
+        try check(try cloudFiles() == bootSource && cloudStore.cloudOnlyLayout(bootLocal),
+            "Cloud-only planner leaves Local and all Cloud bytes untouched")
+        try check(!FileManager.default.fileExists(atPath:bootStore.backups.path),"Cloud-only planner never creates backup")
+        try check(try total(bootPlans.first { $0.path.path.contains("/Weekly/ActivitySegments/") }!.replacement) == 14400,
+            "Cloud-only exact per-app day/week sum")
+        let bootMeta = bootCloud.appendingPathComponent("Hourly/Metadata.plist")
+        let bootMetaBytes = try boundedBytes(bootMeta)
+        for label in ["wrongdevice","future","stale","schema","interval"] {
+            var doc = try PropertyListSerialization.propertyList(from:bootMetaBytes,format:nil) as! [String:Any]
+            var value = doc["value"] as! [String:Any]
+            switch label {
+            case "wrongdevice": value["device"] = ["identifier":UUID().uuidString]
+            case "future": value["lastUpdatedDate"] = Date(timeIntervalSinceReferenceDate:1001)
+            case "stale": value["lastUpdatedDate"] = Date(timeIntervalSinceReferenceDate:-1)
+            case "schema": value["unexpected"] = 1
+            default: value["segmentInterval"] = 1
+            }
+            doc["value"] = value
+            try bootStore.writeExisting(bootMeta,original:boundedBytes(bootMeta),replacement:AppTotalFixtures.bytes(doc))
+            try rejects("Cloud-only "+label+" rejected") { _ = try bootStore.prepareAppTotals(request,now:cloudNow) }
+        }
+        try bootStore.writeExisting(bootMeta,original:boundedBytes(bootMeta),replacement:bootMetaBytes)
+        try rejects("Cloud-only snapshot older than one hour rejected") {
+            _ = try bootStore.prepareAppTotals(request,now:Date(timeIntervalSinceReferenceDate:3601))
+        }
+        let conflict = bootLocal.appendingPathComponent("Hourly/ActivitySegments/0.0.plist")
+        try privateWrite(try AppTotalFixtures.bytes(AppTotalFixtures.document(start:0,duration:3600)),conflict)
+        try rejects("partial Local without trusted Hourly metadata cannot bootstrap") { _ = try bootStore.prepareAppTotals(request,now:cloudNow) }
+        try FileManager.default.removeItem(at:conflict)
+        for plan in bootPlans { try bootStore.writeAppTotal(plan) } // disposable fixture only
+        try check(try cloudFiles() == bootSource,"fixture Local initialization never writes Cloud")
+        let repeated = try bootStore.prepareAppTotals(request,now:cloudNow)
+        try check(repeated.count == bootPlans.count,"initialized Local remains independently reusable")
+        for first in bootPlans {
+            let next = repeated.first { $0.path == first.path }!
+            try check(try bytes(PropertyListSerialization.propertyList(from:first.replacement,format:nil)) ==
+                bytes(PropertyListSerialization.propertyList(from:next.replacement,format:nil)),
+                "repeat plan semantically idempotent")
+        }
+        // Closed outside-day history is equally mandatory with zero Local data.
+        for gran in ["Hourly","Daily","Weekly"] {
+            for path in try FileManager.default.contentsOfDirectory(at:outsideLocal.appendingPathComponent(gran+"/ActivitySegments"),includingPropertiesForKeys:nil) {
+                try FileManager.default.removeItem(at:path)
+            }
+            let metadata = outsideLocal.appendingPathComponent(gran+"/Metadata.plist")
+            if FileManager.default.fileExists(atPath:metadata.path) { try FileManager.default.removeItem(at:metadata) }
+        }
+        let bootstrapOutside = try outsideStore.prepareAppTotals(outsideRequest,now:outsideNow)
+        try check(try total(bootstrapOutside.first { $0.path.path.contains("/Weekly/ActivitySegments/") }!.replacement) == 83000,
+            "Cloud-only retains exact 200 seconds of closed outside-day history")
+        try FileManager.default.removeItem(at:priorDay)
+        try rejects("Cloud-only missing closed-day proof rejected") { _ = try outsideStore.prepareAppTotals(outsideRequest,now:outsideNow) }
+        try privateWrite(priorBytes,priorDay)
+        try outsideStore.writeExisting(outsideWeek,original:outsideWeekBytes,replacement:AppTotalFixtures.bytes(weekDoc))
+        try rejects("Cloud-only unexplained weekly contribution rejected") { _ = try outsideStore.prepareAppTotals(outsideRequest,now:outsideNow) }
+        try outsideStore.writeExisting(outsideWeek,original:boundedBytes(outsideWeek),replacement:outsideWeekBytes)
         print("PASS native summed-category production planner \(count) checks; disposable fixtures only, no planning bypass")
     }
 }

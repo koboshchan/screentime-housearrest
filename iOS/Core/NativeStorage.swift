@@ -548,7 +548,7 @@ public final class NativeStorage {
                             }
                         } else { try requireStorage(errno == ENOENT,"Cannot inspect Cloud days.","read_failed") }
                     }
-                    var relativePaths = ["Daily/Metadata.plist","Weekly/Metadata.plist"]
+                    var relativePaths = ["Hourly/Metadata.plist","Daily/Metadata.plist","Weekly/Metadata.plist"]
                     relativePaths += days.sorted().map { "Daily/ActivitySegments/" + String(format:"%.1f.plist",$0) }
                     relativePaths += weeks.sorted().map { "Weekly/ActivitySegments/" + String(format:"%.1f.plist",$0) }
                     // Bind every potentially created Hourly bucket as an
