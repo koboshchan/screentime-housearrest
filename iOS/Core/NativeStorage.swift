@@ -414,7 +414,9 @@ public final class NativeStorage {
             let length = bytes.withUnsafeMutableBytes { name(pid,$0.baseAddress,UInt32($0.count)) }
             if length <= 0 {
                 if kill(pid,0) != 0 && errno == ESRCH { return false }
-                throw StorageFailure("refresh_failed","Cannot confirm signalled process exit.")
+                // A dying UIKit task can temporarily lose its name before ESRCH.
+                // Keep waiting, never acknowledge or signal this ambiguous PID.
+                return true
             }
             // A reused PID with a different name no longer represents the old
             // target. Same-name reuse conservatively times out, never re-kills.

@@ -23,6 +23,10 @@ class RefreshChecks(unittest.TestCase):
         self.assertIn('return String(cString:bytes) == process', refresh)
         self.assertNotIn('posix_spawn', refresh)
         self.assertNotIn('Process()', refresh)
+        self.assertNotIn('Cannot confirm signalled process exit.', refresh)
+        unnamed = refresh.split('if length <= 0 {')[1].split('// A reused PID')[0]
+        self.assertIn('errno == ESRCH { return false }', unnamed)
+        self.assertIn('return true', unnamed)
     def test_open_only_after_success(self):
         store = (ROOT/'iOS/App/Store.swift').read_text()
         success = store.split('if a.ok {')[1].split('} else if')[0]
