@@ -396,11 +396,13 @@ public final class NativeStorage {
                 var again = [CChar](repeating:0,count:1024)
                 let checked = again.withUnsafeMutableBytes { name(pid,$0.baseAddress,UInt32($0.count)) }
                 try requireStorage(checked > 0 && String(cString:again) == process,"Refresh process changed.","refresh_failed")
-                try requireStorage(kill(pid,SIGTERM) == 0 || errno == ESRCH,"Cannot stop UI process.","refresh_failed")
+                // Suspended UIKit processes may never handle SIGTERM. Force the
+                // fixed refresh once per exact inspected PID, then confirm exit.
+                try requireStorage(kill(pid,SIGKILL) == 0 || errno == ESRCH,"Cannot stop UI process.","refresh_failed")
                 signalled.append((pid,process))
             }
         }
-        // SIGTERM is asynchronous. Do not acknowledge Apply while an old agent
+        // Process termination is asynchronous. Do not acknowledge Apply while an old agent
         // or Settings process is still alive. Only observe the original PIDs;
         // never repeatedly signal a launchd replacement or unrelated process.
         try RefreshExitBarrier.wait(signalled,stillRunning: { pid, process in

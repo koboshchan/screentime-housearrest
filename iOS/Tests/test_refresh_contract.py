@@ -10,6 +10,19 @@ class RefreshChecks(unittest.TestCase):
             self.assertIn('"'+name+'"', route)
         self.assertNotIn('posix_spawn', route)
         self.assertNotIn('/usr/bin/', route.split('static let refreshTargets')[1])
+    def test_suspended_ui_forced_exit_stays_exact_and_acknowledged(self):
+        storage = (ROOT/'iOS/Core/NativeStorage.swift').read_text()
+        refresh = storage.split('static func refreshProcesses')[1].split('func lockSegments')[0]
+        self.assertIn('names.contains(process)', refresh)
+        self.assertIn('String(cString:again) == process', refresh)
+        self.assertIn('kill(pid,SIGKILL)', refresh)
+        self.assertNotIn('kill(pid,SIGTERM)', refresh)
+        self.assertEqual(refresh.count('kill(pid,SIGKILL)'), 1)
+        self.assertIn('pid != getpid()', refresh)
+        self.assertIn('RefreshExitBarrier.wait(signalled', refresh)
+        self.assertIn('return String(cString:bytes) == process', refresh)
+        self.assertNotIn('posix_spawn', refresh)
+        self.assertNotIn('Process()', refresh)
     def test_open_only_after_success(self):
         store = (ROOT/'iOS/App/Store.swift').read_text()
         success = store.split('if a.ok {')[1].split('} else if')[0]
