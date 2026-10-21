@@ -96,13 +96,13 @@ extension NativeStorage {
             catch { try? db.execute("ROLLBACK"); throw error }
             try requireStorage(try cacheRevision() == cacheBefore,"DeviceActivity cache changed after backup; cache totals not written.","concurrent_change")
             // Preserve the Gemini stream/database writer. Replace cache deletion
-            // with native apps-only segments and the proven future-metadata bypass.
+            // with native apps-only segments and a nonfuture fetch watermark.
             // Metadata plans are last so no partial segment plan is marked fresh.
             for plan in appTotalPlans { try writeAppTotal(plan) }
             try refreshRunner(["gemini-sync-or-open"])
         } catch {
             throw StorageFailure("partial_apply_failed","\(error). Verified current backup \(id). Stores are not one atomic transaction.")
         }
-        return HelperReply(ok:true,code:"refresh_requested",message:"Saved summed app totals and requested refresh. Category totals use the same overlapping app sum. Native cache refresh is held for at least 30 days; later usage will not refresh automatically during that hold. Open Settings to verify.",details:["backupID":id,"revision":before,"writer":"gemini_ios_full_native","knowledgeC":"full_gemini_rewrite","aggregateInputs":"usage_and_backlight","totalPolicy":"sum_apps_including_overlap","categoryPolicy":"sum_apps_including_overlap","cacheRefresh":"held_at_least_30_days","multiStoreAtomic":"false"])
+        return HelperReply(ok:true,code:"refresh_requested",message:"Saved summed app totals and requested refresh. Category totals use the same overlapping app sum. Native cache refresh remains enabled; later device activity can update these totals. Open Settings to verify.",details:["backupID":id,"revision":before,"writer":"gemini_ios_full_native","knowledgeC":"full_gemini_rewrite","aggregateInputs":"usage_and_backlight","totalPolicy":"sum_apps_including_overlap","categoryPolicy":"sum_apps_including_overlap","cacheRefresh":"native_refresh_enabled","multiStoreAtomic":"false"])
     }
 }

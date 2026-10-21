@@ -136,7 +136,7 @@ import Darwin
         try check(futurePlans.count == 29,"future timestamp alone does not reject valid native baseline")
         for plan in futurePlans.suffix(3) {
             let doc = try PropertyListSerialization.propertyList(from:plan.replacement,format:nil) as! [String:Any]
-            try check((doc["value"] as! [String:Any])["lastUpdatedDate"] as? Date == future,"longer future hold preserved")
+            try check((doc["value"] as! [String:Any])["lastUpdatedDate"] as? Date == now,"future watermark repaired to write time")
         }
         for gran in ["Daily","Weekly"] {
             let path = root.appendingPathComponent(gran+"/ActivitySegments/0.0.plist")

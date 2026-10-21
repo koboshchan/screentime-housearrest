@@ -602,7 +602,7 @@ import Darwin
         try check(try NativeAppTotals.seconds(nativeDay.value["totalActivityDuration"]) == 120,"shipping Apply writes exact apps-only native total")
         try check(geminiReply.details["totalPolicy"] == "sum_apps_including_overlap","shipping total policy")
         let metadata = try PropertyListSerialization.propertyList(from:boundedBytes(cache.appendingPathComponent("Hourly/Metadata.plist")),format:nil) as! [String:Any]
-        try check(((metadata["value"] as! [String:Any])["lastUpdatedDate"] as! Date) > Date(),"shipping Apply freezes native refresh in future")
+        try check(((metadata["value"] as! [String:Any])["lastUpdatedDate"] as! Date) <= Date(),"shipping Apply never advances native fetch watermark into future")
         try check(try sqliteState(parityDB) != geminiDBBefore,"full Gemini route rewrites knowledgeC")
         do {
             let db = try KnowledgeDatabase(parityDB)

@@ -193,7 +193,9 @@ enum NativeAppTotals {
               old.timeIntervalSinceReferenceDate.isFinite, until.timeIntervalSinceReferenceDate.isFinite else {
             throw StorageFailure("unsupported_schema", "Unsupported DeviceActivity refresh metadata.")
         }
-        value["lastUpdatedDate"] = max(old, until)
+        // Native DeviceActivity constructs a fetch interval from this watermark to now.
+        // A future watermark traps DateInterval(start:end:) in Settings.
+        value["lastUpdatedDate"] = until
         doc["value"] = value
         return try PropertyListSerialization.data(fromPropertyList: doc, format: .binary, options: 0)
     }
@@ -554,9 +556,9 @@ extension NativeStorage {
                     : NativeAppTotals.replacing(segment, totals: NativeAppTotals.durations(request, start: start, end: end), catalog: catalog),
                 template: found?.0 ?? template.0))
         }
-        // Future lastUpdatedDate is the Gemini bypass. Preserve any longer
-        // existing freeze, and also cover edits whose end is later than now.
-        let until = Date(timeIntervalSinceReferenceDate: max(now.timeIntervalSinceReferenceDate, request.end) + 30 * 86400)
+        // Keep the native fetch watermark at this write time, never in the future.
+        // This also repairs future watermarks left by earlier Surface versions.
+        let until = now
         for granularity in ["Hourly", "Daily", "Weekly"] {
             let path = root.appendingPathComponent(granularity + "/Metadata.plist")
             try rejectLinks(path)
